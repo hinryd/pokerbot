@@ -8,7 +8,6 @@ export type Seat = 'player' | 'bot';
 export type Street = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
 export type Difficulty = 'apprentice' | 'contender' | 'shark';
 export type SessionStatus = 'ready' | 'active' | 'complete';
-export type RecommendedFocus = 'balanced' | 'preflop' | 'aggression' | 'discipline';
 export type ActionType = 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all-in';
 export type ReviewStatus = 'pending' | 'ready';
 
@@ -16,6 +15,8 @@ export interface ActionOption {
 	type: ActionType;
 	label: string;
 	amount?: number;
+	minAmount?: number;
+	maxAmount?: number;
 }
 
 export interface HandAction {
@@ -79,11 +80,9 @@ export interface HandReviewDraft {
 }
 
 export interface SessionCreationInput {
-	totalHands: number;
 	difficulty: Difficulty;
 	startingStack: number;
 	bigBlind: number;
-	focus: RecommendedFocus;
 }
 
 export interface DifficultyOption {

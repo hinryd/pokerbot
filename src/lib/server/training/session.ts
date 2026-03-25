@@ -4,6 +4,8 @@ import { trainingSession, trainingHand } from '$lib/server/db/schema';
 import type { Difficulty, Seat, SessionCreationInput } from '$lib/poker/types';
 import { createNewHand } from '$lib/poker/engine';
 
+const buildProgressLabel = (handNumber: number) => `Hand ${handNumber}`;
+
 export const insertHand = async (
 	sessionId: string,
 	handNumber: number,
@@ -30,15 +32,15 @@ export const createTrainingSession = async (userId: string, input: SessionCreati
 	await db.insert(trainingSession).values({
 		id: sessionId,
 		userId,
-		totalHands: input.totalHands,
+		totalHands: 0,
 		difficulty: input.difficulty as Difficulty,
-		focus: input.focus,
+		focus: 'all-decisions',
 		startingStack: input.startingStack,
 		bigBlind: input.bigBlind,
 		status: 'active',
 		currentHandNumber: 1,
 		overallGrade: null,
-		progressLabel: `Hand 1 of ${input.totalHands}`
+		progressLabel: buildProgressLabel(1)
 	});
 
 	await insertHand(

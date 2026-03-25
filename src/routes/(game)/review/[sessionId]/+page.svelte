@@ -2,16 +2,9 @@
 	import type { PageProps } from './$types';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Progress } from '$lib/components/ui/progress';
 	import { Separator } from '$lib/components/ui/separator';
 
 	let { data }: PageProps = $props();
-
-	const progressPct = $derived(
-		data.session.totalHands > 0
-			? Math.round((data.reviews.length / data.session.totalHands) * 100)
-			: 0
-	);
 
 	const gradeColor = (g: number) =>
 		g >= 75 ? 'text-emerald-400' : g >= 60 ? 'text-primary' : 'text-destructive';
@@ -41,7 +34,7 @@
 		</div>
 
 		<div class="grid grid-cols-2 gap-px border-b border-border lg:grid-cols-1">
-			{#each [{ label: 'Hands', value: `${data.reviews.length}/${data.session.totalHands}` }, { label: 'Focus', value: data.session.focus }, { label: 'Difficulty', value: data.session.difficulty }, { label: 'Status', value: data.session.status }] as stat (stat.label)}
+			{#each [{ label: 'Hands played', value: `${data.reviews.length}` }, { label: 'Starting stack', value: `${data.session.startingStack}` }, { label: 'Difficulty', value: data.session.difficulty }, { label: 'Status', value: data.session.status }] as stat (stat.label)}
 				<div class="bg-card px-5 py-3">
 					<p class="mb-0.5 text-[10px] tracking-widest text-muted-foreground uppercase">
 						{stat.label}
@@ -49,14 +42,6 @@
 					<p class="text-xs font-semibold text-foreground">{stat.value}</p>
 				</div>
 			{/each}
-		</div>
-
-		<div class="border-b border-border p-5">
-			<div class="mb-2 flex justify-between text-[10px] text-muted-foreground">
-				<span>Completion</span>
-				<span>{progressPct}%</span>
-			</div>
-			<Progress value={progressPct} class="h-0.5" />
 		</div>
 
 		<div class="hidden p-5 lg:block">

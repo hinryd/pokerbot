@@ -2,21 +2,95 @@ import type { ActionOption, ActionType, HandState, Seat } from './types';
 import { buildShuffledDeck, dealNewHand } from './deck';
 import { determineWinner } from './evaluator';
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+function settleHandOutcome(state: HandState): HandState {
+	if (state.outcome === null) return state;
+	if (state.pot === 0) return state;
+
+	if (state.outcome === 'player_wins') {
+		return {
+			...state,
+			playerStack: state.playerStack + state.pot,
+			pot: 0,
+			actionOptions: []
+		};
+	}
+
+	if (state.outcome === 'bot_wins') {
+		return {
+			...state,
+			botStack: state.botStack + state.pot,
+			pot: 0,
+			actionOptions: []
+		};
+	}
+
+	return {
+		...state,
+		playerStack: state.playerStack + state.pot / 2,
+		botStack: state.botStack + state.pot / 2,
+		pot: 0,
+		actionOptions: []
+	};
+}
+
+function getActorBet(state: HandState, actor: Seat) {
+	return actor === 'player' ? state.playerBetThisStreet : state.botBetThisStreet;
+}
+
+function getActorStack(state: HandState, actor: Seat) {
+	return actor === 'player' ? state.playerStack : state.botStack;
+}
+
+function getMinRaiseTo(state: HandState, actor: Seat) {
+	const actorBet = getActorBet(state, actor);
+	const lastRaiseSize = Math.max(state.bigBlind, state.currentBet - actorBet);
+	return state.currentBet + lastRaiseSize;
+}
+
+export function getActionOption(state: HandState, actor: Seat, type: ActionType) {
+	return buildActionOptions(state, actor).find((option) => option.type === type) ?? null;
+}
+
+export function normalizeActionAmount(
+	state: HandState,
+	actor: Seat,
+	type: ActionType,
+	rawAmount: number
+) {
+	const option = getActionOption(state, actor, type);
+	if (!option) return null;
+	if (type === 'check' || type === 'fold') return 0;
+	if (type === 'call' || type === 'all-in') return option.amount ?? 0;
+	if (type === 'bet' || type === 'raise') {
+		const minAmount = option.minAmount ?? option.amount ?? 0;
+		const maxAmount = option.maxAmount ?? option.amount ?? minAmount;
+		return clamp(Math.round(rawAmount || minAmount), minAmount, maxAmount);
+	}
+	return option.amount ?? 0;
+}
+
 export function buildActionOptions(state: HandState, actor: Seat): ActionOption[] {
-	const actorBet = actor === 'player' ? state.playerBetThisStreet : state.botBetThisStreet;
-	const actorStack = actor === 'player' ? state.playerStack : state.botStack;
+	const actorBet = getActorBet(state, actor);
+	const actorStack = getActorStack(state, actor);
 	const toCall = state.currentBet - actorBet;
 
 	if (toCall <= 0) {
 		const minBet = state.bigBlind;
-		const potBet = Math.max(minBet + 1, Math.round(state.pot * 0.66));
 		if (actorStack < minBet) return [{ type: 'check', label: 'Check' }];
 		const opts: ActionOption[] = [
 			{ type: 'check', label: 'Check' },
-			{ type: 'bet', label: `Bet ${minBet}`, amount: minBet }
+			{
+				type: 'bet',
+				label: actorStack > minBet ? `Bet ${minBet}-${actorStack}` : `Bet ${minBet}`,
+				amount: minBet,
+				minAmount: minBet,
+				maxAmount: actorStack
+			}
 		];
-		if (potBet > minBet && actorStack >= potBet) {
-			opts.push({ type: 'bet', label: `Bet ${potBet}`, amount: potBet });
+		if (actorStack > minBet) {
+			opts.push({ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack });
 		}
 		return opts;
 	}
@@ -29,9 +103,10 @@ export function buildActionOptions(state: HandState, actor: Seat): ActionOption[
 		];
 	}
 
-	const minRaiseTo = state.currentBet * 2;
+	const minRaiseTo = getMinRaiseTo(state, actor);
 	const raiseAdd = minRaiseTo - actorBet;
 	const canRaise = actorStack > callCost + state.bigBlind;
+	const maxRaiseAdd = actorStack;
 
 	const opts: ActionOption[] = [
 		{ type: 'fold', label: 'Fold' },
@@ -39,7 +114,17 @@ export function buildActionOptions(state: HandState, actor: Seat): ActionOption[
 	];
 
 	if (canRaise && raiseAdd <= actorStack) {
-		opts.push({ type: 'raise', label: `Raise to ${minRaiseTo}`, amount: raiseAdd });
+		opts.push({
+			type: 'raise',
+			label: `Raise to ${minRaiseTo}-${actorBet + maxRaiseAdd}`,
+			amount: raiseAdd,
+			minAmount: raiseAdd,
+			maxAmount: maxRaiseAdd
+		});
+	}
+
+	if (actorStack > callCost) {
+		opts.push({ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack });
 	}
 
 	return opts;
@@ -84,7 +169,7 @@ function advanceStreet(s: HandState): HandState {
 			s.botCards as [string, string] & typeof s.botCards,
 			s.allBoardCards
 		);
-		return ns;
+		return settleHandOutcome(ns);
 	}
 
 	ns.toAct = s.dealer === 'player' ? 'bot' : 'player';
@@ -122,11 +207,10 @@ export function applyAction(state: HandState, actor: Seat, type: ActionType, amo
 
 	if (type === 'fold') {
 		s.outcome = actor === 'player' ? 'bot_wins' : 'player_wins';
-		s.actionOptions = [];
-		return s;
+		return settleHandOutcome(s);
 	}
 
-	if (shouldRunoutToShowdown(s)) return runoutToShowdown(s);
+	if (shouldRunoutToShowdown(s)) return settleHandOutcome(runoutToShowdown(s));
 
 	if (isStreetComplete(s)) return advanceStreet(s);
 
@@ -155,20 +239,33 @@ export function createNewHand(
 		botCards,
 		boardCards: [],
 		allBoardCards,
-		pot: bigBlind * 1.5,
-		playerStack: dealer === 'player' ? playerStack - smallBlind : playerStack - bigBlind,
-		botStack: dealer === 'bot' ? botStack - smallBlind : botStack - bigBlind,
+		pot: 0,
+		playerStack,
+		botStack,
 		smallBlind,
 		bigBlind,
-		currentBet: bigBlind,
-		playerBetThisStreet: dealer === 'player' ? smallBlind : bigBlind,
-		botBetThisStreet: dealer === 'bot' ? smallBlind : bigBlind,
+		currentBet: 0,
+		playerBetThisStreet: 0,
+		botBetThisStreet: 0,
 		actionsThisStreet: 0,
 		handActions: [],
 		outcome: null,
 		actionOptions: []
 	};
 
+	const playerBlind = dealer === 'player' ? Math.min(playerStack, smallBlind) : Math.min(playerStack, bigBlind);
+	const botBlind = dealer === 'bot' ? Math.min(botStack, smallBlind) : Math.min(botStack, bigBlind);
+
+	s.playerStack -= playerBlind;
+	s.botStack -= botBlind;
+	s.playerBetThisStreet = playerBlind;
+	s.botBetThisStreet = botBlind;
+	s.currentBet = Math.max(playerBlind, botBlind);
+	s.pot = playerBlind + botBlind;
+
 	s.actionOptions = buildActionOptions(s, dealer);
+	if (shouldRunoutToShowdown(s)) {
+		return runoutToShowdown(s);
+	}
 	return s;
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte } from 'drizzle-orm';
 import { db } from '$lib/server/db';
 import { decisionReview, handReview, trainingHand, trainingSession } from '$lib/server/db/schema';
 import type { DecisionEvidence, HandReviewDraft, HandState } from '$lib/poker/types';
@@ -43,6 +43,20 @@ export const getCurrentHandForSession = async (sessionId: string, currentHandNum
 
 	if (!hand) return null;
 	return { ...hand, state: JSON.parse(hand.stateJson) as HandState };
+};
+
+export const getHandStatesForSession = async (sessionId: string, upToHandNumber?: number) => {
+	const rows = await db
+		.select({ handNumber: trainingHand.handNumber, stateJson: trainingHand.stateJson })
+		.from(trainingHand)
+		.where(
+			upToHandNumber === undefined
+				? eq(trainingHand.sessionId, sessionId)
+				: and(eq(trainingHand.sessionId, sessionId), lte(trainingHand.handNumber, upToHandNumber))
+		)
+		.orderBy(asc(trainingHand.handNumber));
+
+	return rows.map((row) => ({ handNumber: row.handNumber, state: JSON.parse(row.stateJson) as HandState }));
 };
 
 export const getReviewBySession = async (sessionId: string) => {

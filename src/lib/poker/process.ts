@@ -1,8 +1,13 @@
+import type { PlayerSessionProfile } from './analysis';
 import type { ActionType, Difficulty, HandState } from './types';
-import { applyAction, buildActionOptions } from './engine';
+import { applyAction, buildActionOptions, normalizeActionAmount } from './engine';
 import { botDecide } from './bot';
 
-export function advanceBotTurns(state: HandState, difficulty: Difficulty): HandState {
+export function advanceBotTurns(
+	state: HandState,
+	difficulty: Difficulty,
+	profile?: PlayerSessionProfile
+): HandState {
 	if (state.outcome !== null || state.street === 'showdown' || state.toAct !== 'bot') {
 		return {
 			...state,
@@ -13,8 +18,15 @@ export function advanceBotTurns(state: HandState, difficulty: Difficulty): HandS
 		};
 	}
 
-	const move = botDecide(state, difficulty);
-	const s = applyAction(state, 'bot', move.type, move.amount);
+	const move = botDecide(state, difficulty, profile);
+	const amount = normalizeActionAmount(state, 'bot', move.type, move.amount);
+	if (amount === null) {
+		return {
+			...state,
+			actionOptions: buildActionOptions(state, 'player')
+		};
+	}
+	const s = applyAction(state, 'bot', move.type, amount);
 
 	if (s.outcome === null && s.street !== 'showdown' && s.toAct === 'player') {
 		s.actionOptions = buildActionOptions(s, 'player');
@@ -31,5 +43,12 @@ export function processPlayerAction(
 	amount: number,
 	_difficulty: Difficulty
 ): HandState {
-	return applyAction(state, 'player', type, amount);
+	const normalizedAmount = normalizeActionAmount(state, 'player', type, amount);
+	if (normalizedAmount === null) {
+		return {
+			...state,
+			actionOptions: buildActionOptions(state, 'player')
+		};
+	}
+	return applyAction(state, 'player', type, normalizedAmount);
 }

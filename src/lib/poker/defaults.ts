@@ -22,22 +22,12 @@ export const difficultyOptions: DifficultyOption[] = [
 ];
 
 export const sessionPresets = {
-	handCounts: [12, 25, 50],
 	startingStacks: [100, 150, 200],
 	bigBlinds: [2, 5, 10]
 } as const;
 
 export const defaultSessionInput: SessionCreationInput = {
-	totalHands: 25,
 	difficulty: 'contender',
 	startingStack: 100,
-	bigBlind: 2,
-	focus: 'balanced'
+	bigBlind: 2
 };
-
-export const trainingFocusOptions = [
-	{ value: 'balanced', label: 'Balanced growth', detail: 'Review every street with no extra weighting.' },
-	{ value: 'preflop', label: 'Preflop discipline', detail: 'Emphasize opening, calling, and 3-bet quality.' },
-	{ value: 'aggression', label: 'Pressure points', detail: 'Focus on betting, raising, and bluff selection.' },
-	{ value: 'discipline', label: 'Loss control', detail: 'Focus on folds, bluff catches, and thin value restraint.' }
-] as const;

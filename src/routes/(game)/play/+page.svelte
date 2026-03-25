@@ -26,9 +26,7 @@
 					<p class="mb-2 text-[10px] font-semibold tracking-[0.3em] text-primary uppercase">
 						New session
 					</p>
-					<h1 class="text-2xl font-bold tracking-tight text-foreground">
-						Configure training block
-					</h1>
+					<h1 class="text-2xl font-bold tracking-tight text-foreground">Configure match</h1>
 				</div>
 				<span class="border border-border px-2 py-1 text-[11px] text-muted-foreground"
 					>{data.user.email}</span
@@ -50,27 +48,8 @@
 					>
 						Table config
 					</p>
-					<div class="grid gap-px border border-border md:grid-cols-3">
-						<label class="cursor-pointer bg-card p-4">
-							<span class="mb-2 block text-[10px] tracking-widest text-muted-foreground uppercase"
-								>Hands</span
-							>
-							<select
-								name="totalHands"
-								class="w-full cursor-pointer bg-transparent text-sm font-semibold text-foreground outline-none"
-							>
-								{#each data.sessionPresets.handCounts as value (value)}
-									<option
-										{value}
-										selected={value === data.defaultSessionInput.totalHands}
-										class="bg-card">{value} hands</option
-									>
-								{/each}
-							</select>
-						</label>
-						<label
-							class="cursor-pointer border-t border-border bg-card p-4 md:border-t-0 md:border-r md:border-l md:border-border"
-						>
+					<div class="grid gap-px border border-border md:grid-cols-2">
+						<label class="cursor-pointer bg-card p-4 md:border-r md:border-border">
 							<span class="mb-2 block text-[10px] tracking-widest text-muted-foreground uppercase"
 								>Starting stack</span
 							>
@@ -105,6 +84,9 @@
 							</select>
 						</label>
 					</div>
+					<p class="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+						The match keeps running with carried stacks until one side busts or you end the session.
+					</p>
 				</div>
 
 				<div>
@@ -141,31 +123,6 @@
 				</div>
 
 				<div>
-					<p
-						class="mb-3 text-[10px] font-semibold tracking-[0.3em] text-muted-foreground uppercase"
-					>
-						Training focus
-					</p>
-					<div class="grid gap-px border border-border md:grid-cols-2">
-						{#each data.trainingFocusOptions as focus (focus.value)}
-							<label
-								class="cursor-pointer bg-card p-4 transition-colors has-[:checked]:border-l-2 has-[:checked]:border-l-primary has-[:checked]:bg-primary/5"
-							>
-								<input
-									class="sr-only"
-									type="radio"
-									name="focus"
-									value={focus.value}
-									checked={focus.value === data.defaultSessionInput.focus}
-								/>
-								<p class="mb-1 text-xs font-semibold text-foreground">{focus.label}</p>
-								<p class="text-[11px] leading-relaxed text-muted-foreground">{focus.detail}</p>
-							</label>
-						{/each}
-					</div>
-				</div>
-
-				<div>
 					<Button type="submit" class="h-9 px-6 text-xs tracking-wider">Start session →</Button>
 				</div>
 			</form>
@@ -180,12 +137,12 @@
 					<div class="grid gap-px">
 						{#each data.recentSessions as session (session.id)}
 							<a
-								href={`/${session.id}`}
+								href={`/review/${session.id}`}
 								class="group flex items-center justify-between gap-3 bg-card p-3 transition-colors hover:bg-accent"
 							>
 								<div class="min-w-0">
 									<p class="mb-1 text-[10px] text-muted-foreground">
-										{session.difficulty} · {session.focus}
+										{session.difficulty}
 									</p>
 									<p class="truncate text-xs font-medium text-foreground">
 										{session.progressLabel}

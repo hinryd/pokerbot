@@ -1,9 +1,9 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { defaultSessionInput, difficultyOptions, sessionPresets, trainingFocusOptions } from '$lib/poker/defaults';
+import { defaultSessionInput, difficultyOptions, sessionPresets } from '$lib/poker/defaults';
 import { createTrainingSession } from '$lib/server/training/session';
 import { getRecentSessions } from '$lib/server/training/queries';
-import type { Difficulty, RecommendedFocus, SessionCreationInput } from '$lib/poker/types';
+import type { Difficulty, SessionCreationInput } from '$lib/poker/types';
 
 const parsePositiveInt = (value: FormDataEntryValue | null, fallback: number) => {
 	const parsed = Number(value);
@@ -11,11 +11,9 @@ const parsePositiveInt = (value: FormDataEntryValue | null, fallback: number) =>
 };
 
 const parseInput = (formData: FormData): SessionCreationInput => ({
-	totalHands: parsePositiveInt(formData.get('totalHands'), defaultSessionInput.totalHands),
 	difficulty: (formData.get('difficulty')?.toString() ?? defaultSessionInput.difficulty) as Difficulty,
 	startingStack: parsePositiveInt(formData.get('startingStack'), defaultSessionInput.startingStack),
-	bigBlind: parsePositiveInt(formData.get('bigBlind'), defaultSessionInput.bigBlind),
-	focus: (formData.get('focus')?.toString() ?? defaultSessionInput.focus) as RecommendedFocus
+	bigBlind: parsePositiveInt(formData.get('bigBlind'), defaultSessionInput.bigBlind)
 });
 
 export const load: PageServerLoad = async ({ locals }) => ({
@@ -23,7 +21,6 @@ export const load: PageServerLoad = async ({ locals }) => ({
 	defaultSessionInput,
 	difficultyOptions,
 	sessionPresets,
-	trainingFocusOptions,
 	recentSessions: locals.user ? await getRecentSessions(locals.user.id) : []
 });
 
