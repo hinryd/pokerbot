@@ -1,5 +1,5 @@
 import { bestHandScore } from './evaluator';
-import { applyAction } from './engine';
+import { applyResolvedAction } from './engine';
 import {
 	analyzeBlockers,
 	buildSeed,
@@ -174,7 +174,8 @@ const categoryBase: Record<SpotAnalysis['madeCategory'], number> = {
 
 const rangeBlueprints = {
 	buttonOpen: '22+,A2s+,K2s+,Q5s+,J7s+,T7s+,97s+,87s,76s,65s,54s,A2o+,K8o+,Q9o+,J9o+,T9o',
-	bigBlindDefend: '22+,A2s+,K2s+,Q4s+,J6s+,T7s+,97s+,86s+,75s+,64s+,54s,A2o+,K5o+,Q8o+,J8o+,T8o+,98o',
+	bigBlindDefend:
+		'22+,A2s+,K2s+,Q4s+,J6s+,T7s+,97s+,86s+,75s+,64s+,54s,A2o+,K5o+,Q8o+,J8o+,T8o+,98o',
 	buttonDefendVs3Bet: '55+,A7s+,KTs+,QTs+,JTs,ATo+,KQo,A5s-A2s',
 	threeBet: '77+,A9s+,KTs+,QTs+,JTs,AQo+,KQo,A5s-A2s',
 	fourBet: 'QQ+,AKs,AKo,A5s-A4s',
@@ -194,7 +195,8 @@ const otherSeat = (seat: Seat): Seat => (seat === 'player' ? 'bot' : 'player');
 const lastAggressorOnStreet = (state: HandState, street: Street) =>
 	[...state.handActions]
 		.reverse()
-		.find((action) => action.street === street && aggressiveActions.has(action.type))?.actor ?? null;
+		.find((action) => action.street === street && aggressiveActions.has(action.type))?.actor ??
+	null;
 
 const inferRangeEntries = (state: HandState, actor: Seat) => {
 	const actorBet = actor === 'player' ? state.playerBetThisStreet : state.botBetThisStreet;
@@ -203,7 +205,12 @@ const inferRangeEntries = (state: HandState, actor: Seat) => {
 	if (state.street === 'preflop') {
 		const preflopAggressor = lastAggressorOnStreet(state, 'preflop');
 		if (!state.handActions.length) {
-			return [{ notation: inPosition ? rangeBlueprints.buttonOpen : rangeBlueprints.bigBlindDefend, weight: 1 }];
+			return [
+				{
+					notation: inPosition ? rangeBlueprints.buttonOpen : rangeBlueprints.bigBlindDefend,
+					weight: 1
+				}
+			];
 		}
 		if (preflopAggressor === actor) {
 			if (state.currentBet >= state.bigBlind * 4) {
@@ -219,7 +226,12 @@ const inferRangeEntries = (state: HandState, actor: Seat) => {
 		}
 		if (toCall > 0) {
 			return [
-				{ notation: inPosition ? rangeBlueprints.buttonDefendVs3Bet : rangeBlueprints.bigBlindDefend, weight: 1 },
+				{
+					notation: inPosition
+						? rangeBlueprints.buttonDefendVs3Bet
+						: rangeBlueprints.bigBlindDefend,
+					weight: 1
+				},
 				{ notation: rangeBlueprints.preflopTrap, weight: 0.14 }
 			];
 		}
@@ -302,7 +314,10 @@ export function analyzeSpot(state: HandState, actor: Seat): SpotAnalysis {
 	const spr = state.pot > 0 ? actorStack / state.pot : actorStack;
 	const inPosition = state.dealer === actor;
 	const actorRange = buildWeightedRange(inferRangeEntries(state, actor), state.boardCards);
-	const opponentRange = buildWeightedRange(inferRangeEntries(state, otherSeat(actor)), state.boardCards);
+	const opponentRange = buildWeightedRange(
+		inferRangeEntries(state, otherSeat(actor)),
+		state.boardCards
+	);
 	const boardSeed = state.boardCards.join('');
 	const handEquity = sampleHandVsRangeEquity({
 		heroCards: actorHole,
@@ -319,7 +334,9 @@ export function analyzeSpot(state: HandState, actor: Seat): SpotAnalysis {
 	const actorSummary = summarizeRange(actorRange, state.boardCards);
 	const opponentSummary = summarizeRange(opponentRange, state.boardCards);
 	const actorValueShare =
-		actorSummary.total > 0 ? (actorSummary.value + actorSummary.semiBluff * 0.45) / actorSummary.total : 0;
+		actorSummary.total > 0
+			? (actorSummary.value + actorSummary.semiBluff * 0.45) / actorSummary.total
+			: 0;
 	const opponentValueShare =
 		opponentSummary.total > 0
 			? (opponentSummary.value + opponentSummary.semiBluff * 0.45) / opponentSummary.total
@@ -330,7 +347,10 @@ export function analyzeSpot(state: HandState, actor: Seat): SpotAnalysis {
 	if (state.street === 'preflop') {
 		const rawStrength = preflopStrength(actorCards, inPosition);
 		const strength = clamp(
-			rawStrength * 0.48 + handEquity.equity * 0.34 + rangeEquity.equity * 0.14 + blockers.blockerScore * 0.04,
+			rawStrength * 0.48 +
+				handEquity.equity * 0.34 +
+				rangeEquity.equity * 0.14 +
+				blockers.blockerScore * 0.04,
 			0.08,
 			0.98
 		);
@@ -381,7 +401,10 @@ export function analyzeSpot(state: HandState, actor: Seat): SpotAnalysis {
 	if (inPosition) rawStrength += 0.02;
 	const texture = boardTexture(state.boardCards);
 	const strength = clamp(
-		rawStrength * 0.42 + handEquity.equity * 0.44 + rangeEquity.equity * 0.1 + blockers.blockerScore * 0.04,
+		rawStrength * 0.42 +
+			handEquity.equity * 0.44 +
+			rangeEquity.equity * 0.1 +
+			blockers.blockerScore * 0.04,
 		0.08,
 		0.995
 	);
@@ -404,9 +427,9 @@ export function analyzeSpot(state: HandState, actor: Seat): SpotAnalysis {
 		opponentValueShare,
 		blockers,
 		bluffable:
-			((madeCategory === 'high-card' ||
+			(madeCategory === 'high-card' ||
 				(madeCategory === 'pair' && !topPair && !overpair && drawStrength > 0)) &&
-				(blockers.blockerScore > -0.16 || opponentBluffShare > 0.22))
+			(blockers.blockerScore > -0.16 || opponentBluffShare > 0.22)
 	};
 }
 
@@ -440,10 +463,14 @@ export function rebuildInitialState(finalState: HandState): HandState {
 		playerStack: settledPlayerStack - playerBlind,
 		botStack: settledBotStack - botBlind,
 		currentBet: Math.max(playerBlind, botBlind),
+		lastFullRaiseSize: finalState.bigBlind,
 		playerBetThisStreet: playerBlind,
 		botBetThisStreet: botBlind,
 		actionsThisStreet: 0,
 		handActions: [],
+		lastBotDecision: null,
+		botDecisionHistory: [],
+		opponentModel: null,
 		outcome: null,
 		actionOptions: []
 	};
@@ -454,7 +481,7 @@ export function buildHandTimeline(finalState: HandState): HandTimelineEntry[] {
 	const entries: HandTimelineEntry[] = [];
 	finalState.handActions.forEach((action, index) => {
 		const before = current;
-		const after = applyAction(before, action.actor, action.type, action.amount);
+		const after = applyResolvedAction(before, action);
 		entries.push({ before, action, after, index });
 		current = after;
 	});
@@ -553,9 +580,15 @@ export function analyzePlayerSessionProfile(states: HandState[]): PlayerSessionP
 		callVsPressureRate,
 		raiseVsPressureRate,
 		aggressionRate,
-		flopAggressionRate: streetOpportunities.flop ? streetAggression.flop / streetOpportunities.flop : 0,
-		turnAggressionRate: streetOpportunities.turn ? streetAggression.turn / streetOpportunities.turn : 0,
-		riverAggressionRate: streetOpportunities.river ? streetAggression.river / streetOpportunities.river : 0,
+		flopAggressionRate: streetOpportunities.flop
+			? streetAggression.flop / streetOpportunities.flop
+			: 0,
+		turnAggressionRate: streetOpportunities.turn
+			? streetAggression.turn / streetOpportunities.turn
+			: 0,
+		riverAggressionRate: streetOpportunities.river
+			? streetAggression.river / streetOpportunities.river
+			: 0,
 		riverBetRate,
 		riverBluffRate,
 		overfolds: facedPressure >= 3 && foldToPressureRate > 0.42,

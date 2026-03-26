@@ -30,8 +30,20 @@
 			size="sm"
 			class="text-muted-foreground hover:text-foreground">Training</Button
 		>
+		<Button
+			href="/pricing"
+			variant="ghost"
+			size="sm"
+			class="text-muted-foreground hover:text-foreground">Pricing</Button
+		>
 		<div class="flex-1"></div>
 		{#if data.user}
+			<Button
+				href="/profile"
+				variant="ghost"
+				size="sm"
+				class="mr-1 text-muted-foreground hover:text-foreground">Profile</Button
+			>
 			<span class="mr-3 hidden text-[11px] text-muted-foreground sm:block">{data.user.email}</span>
 			<form method="POST" action="/signout">
 				<Button

@@ -1,6 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { defaultSessionInput, difficultyOptions, sessionPresets } from '$lib/poker/defaults';
+import {
+	defaultSessionInput,
+	difficultyOptions,
+	normalizeDifficulty,
+	sessionPresets
+} from '$lib/poker/defaults';
 import { createTrainingSession } from '$lib/server/training/session';
 import { getRecentSessions } from '$lib/server/training/queries';
 import type { Difficulty, SessionCreationInput } from '$lib/poker/types';
@@ -11,7 +16,7 @@ const parsePositiveInt = (value: FormDataEntryValue | null, fallback: number) =>
 };
 
 const parseInput = (formData: FormData): SessionCreationInput => ({
-	difficulty: (formData.get('difficulty')?.toString() ?? defaultSessionInput.difficulty) as Difficulty,
+	difficulty: normalizeDifficulty(formData.get('difficulty')?.toString()) as Difficulty,
 	startingStack: parsePositiveInt(formData.get('startingStack'), defaultSessionInput.startingStack),
 	bigBlind: parsePositiveInt(formData.get('bigBlind'), defaultSessionInput.bigBlind)
 });

@@ -8,6 +8,16 @@
 
 	const gradeColor = (g: number) =>
 		g >= 75 ? 'text-emerald-400' : g >= 60 ? 'text-primary' : 'text-destructive';
+	const pct = (v: number) => `${Math.round(v * 100)}%`;
+	const fmt = (v: number) => (Number.isInteger(v) ? `${v}` : v.toFixed(2));
+	const SUIT: Record<string, string> = { h: '♥', d: '♦', c: '♣', s: '♠' };
+	const parseCard = (code: string) => {
+		const suit = code.slice(-1);
+		const rank = code.slice(0, -1).replace('T', '10');
+		return { rank, suit: SUIT[suit] ?? suit, red: suit === 'h' || suit === 'd' };
+	};
+	const outcomeLabel = (outcome: string | null) =>
+		outcome === 'player_wins' ? 'You won' : outcome === 'bot_wins' ? 'Bot won' : 'Split pot';
 </script>
 
 <div class="flex flex-col lg:h-[calc(100vh-44px)] lg:flex-row lg:overflow-hidden">
@@ -34,7 +44,7 @@
 		</div>
 
 		<div class="grid grid-cols-2 gap-px border-b border-border lg:grid-cols-1">
-			{#each [{ label: 'Hands played', value: `${data.reviews.length}` }, { label: 'Starting stack', value: `${data.session.startingStack}` }, { label: 'Difficulty', value: data.session.difficulty }, { label: 'Status', value: data.session.status }] as stat (stat.label)}
+			{#each [{ label: 'Hands played', value: `${data.reviews.length}` }, { label: 'Starting stack', value: `${data.session.startingStack}` }, { label: 'Profile', value: data.session.difficulty }, { label: 'Status', value: data.session.status }] as stat (stat.label)}
 				<div class="bg-card px-5 py-3">
 					<p class="mb-0.5 text-[10px] tracking-widest text-muted-foreground uppercase">
 						{stat.label}
@@ -81,6 +91,89 @@
 								>{review.status}</Badge
 							>
 						</div>
+
+						{#if review.handContext}
+							<div class="mb-6 border border-border bg-card p-4">
+								<div class="mb-3 flex items-center justify-between gap-3">
+									<p class="text-[10px] tracking-widest text-primary uppercase">Hand context</p>
+									<span class="text-[10px] text-muted-foreground uppercase"
+										>{review.handContext.street} · {outcomeLabel(review.handContext.outcome)}</span
+									>
+								</div>
+								<div class="grid gap-3 md:grid-cols-3">
+									<div>
+										<p class="mb-2 text-[10px] tracking-widest text-muted-foreground uppercase">
+											Your hand
+										</p>
+										<div class="flex gap-2">
+											{#each review.handContext.playerCards as code (code)}
+												{@const c = parseCard(code)}
+												<div
+													class="flex h-14 w-10 flex-col items-center justify-center border border-border bg-background shadow-sm"
+												>
+													<span
+														class="text-xs font-bold {c.red ? 'text-red-400' : 'text-foreground'}"
+														>{c.rank}</span
+													>
+													<span
+														class="text-[10px] {c.red ? 'text-red-400' : 'text-muted-foreground'}"
+														>{c.suit}</span
+													>
+												</div>
+											{/each}
+										</div>
+									</div>
+									<div>
+										<p class="mb-2 text-[10px] tracking-widest text-muted-foreground uppercase">
+											Board
+										</p>
+										<div class="flex gap-2">
+											{#if review.handContext.boardCards.length}
+												{#each review.handContext.boardCards as code (code)}
+													{@const c = parseCard(code)}
+													<div
+														class="flex h-14 w-10 flex-col items-center justify-center border border-border bg-background shadow-sm"
+													>
+														<span
+															class="text-xs font-bold {c.red ? 'text-red-400' : 'text-foreground'}"
+															>{c.rank}</span
+														>
+														<span
+															class="text-[10px] {c.red ? 'text-red-400' : 'text-muted-foreground'}"
+															>{c.suit}</span
+														>
+													</div>
+												{/each}
+											{:else}
+												<p class="text-xs text-muted-foreground">Preflop only</p>
+											{/if}
+										</div>
+									</div>
+									<div>
+										<p class="mb-2 text-[10px] tracking-widest text-muted-foreground uppercase">
+											Bot hand
+										</p>
+										<div class="flex gap-2">
+											{#each review.handContext.botCards as code (code)}
+												{@const c = parseCard(code)}
+												<div
+													class="flex h-14 w-10 flex-col items-center justify-center border border-border bg-background shadow-sm"
+												>
+													<span
+														class="text-xs font-bold {c.red ? 'text-red-400' : 'text-foreground'}"
+														>{c.rank}</span
+													>
+													<span
+														class="text-[10px] {c.red ? 'text-red-400' : 'text-muted-foreground'}"
+														>{c.suit}</span
+													>
+												</div>
+											{/each}
+										</div>
+									</div>
+								</div>
+							</div>
+						{/if}
 
 						<p class="mb-6 text-sm leading-relaxed text-muted-foreground">{review.summary}</p>
 
@@ -138,6 +231,42 @@
 							</p>
 						</div>
 
+						{#if review.opponentModel}
+							<div class="mb-5 border border-border bg-card p-4">
+								<div class="mb-3 flex items-center justify-between gap-3">
+									<p class="text-[10px] tracking-widest text-primary uppercase">
+										Opponent posterior
+									</p>
+									<span class="text-[10px] text-muted-foreground"
+										>{review.opponentModel.observedDecisions} observed decisions</span
+									>
+								</div>
+								<p class="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+									{review.opponentModel.summary}
+								</p>
+								{#if review.opponentModel.tags.length}
+									<div class="mb-3 flex flex-wrap gap-1.5">
+										{#each review.opponentModel.tags as tag (tag)}
+											<Badge variant="outline" class="text-[10px] uppercase">{tag}</Badge>
+										{/each}
+									</div>
+								{/if}
+								<div class="grid gap-px border border-border md:grid-cols-2 xl:grid-cols-5">
+									{#each [{ label: 'Pressure fold', mean: review.opponentModel.foldToPressure.mean, confidence: review.opponentModel.foldToPressure.confidence }, { label: 'Pressure call', mean: review.opponentModel.callVsPressure.mean, confidence: review.opponentModel.callVsPressure.confidence }, { label: 'Pressure raise', mean: review.opponentModel.raiseVsPressure.mean, confidence: review.opponentModel.raiseVsPressure.confidence }, { label: 'Proactive agg', mean: review.opponentModel.proactiveAggression.mean, confidence: review.opponentModel.proactiveAggression.confidence }, { label: 'River bluff', mean: review.opponentModel.riverBluffing.mean, confidence: review.opponentModel.riverBluffing.confidence }] as stat (stat.label)}
+										<div class="bg-background p-3">
+											<p class="mb-1 text-[10px] tracking-widest text-muted-foreground uppercase">
+												{stat.label}
+											</p>
+											<p class="font-mono-nums text-sm font-semibold text-foreground">
+												{pct(stat.mean)}
+											</p>
+											<p class="text-[11px] text-muted-foreground">conf {pct(stat.confidence)}</p>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+
 						<!-- Decision breakdowns -->
 						{#if review.decisionReviews.length}
 							<div class="grid gap-px border border-border">
@@ -174,6 +303,92 @@
 												{/each}
 											</div>
 										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+
+						{#if review.botDecisions.length}
+							<div class="mt-5 grid gap-px border border-border">
+								{#each review.botDecisions as decision (`${decision.street}-${decision.actionIndex}`)}
+									<div class="bg-card p-4">
+										<div class="mb-3 flex items-center justify-between gap-3">
+											<div class="flex items-center gap-2">
+												<Badge variant="outline" class="text-[10px] uppercase">bot</Badge>
+												<Badge variant="outline" class="text-[10px] uppercase"
+													>{decision.street}</Badge
+												>
+												<span class="text-[11px] text-muted-foreground"
+													>{decision.chosenAction}{decision.amount
+														? ` ${fmt(decision.amount)}`
+														: ''}</span
+												>
+											</div>
+											<span class="text-[10px] text-muted-foreground"
+												>{pct(decision.trace.confidence)} confidence</span
+											>
+										</div>
+										<p class="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+											{decision.trace.summary}
+										</p>
+										<div class="mb-3 grid gap-px border border-border md:grid-cols-2">
+											<div class="bg-background p-3">
+												<p class="mb-1 text-[10px] tracking-widest text-muted-foreground uppercase">
+													Baseline
+												</p>
+												<p class="font-mono-nums text-sm font-semibold text-foreground">
+													{decision.trace.baselineAction}
+												</p>
+											</div>
+											<div class="bg-background p-3">
+												<p class="mb-1 text-[10px] tracking-widest text-muted-foreground uppercase">
+													Exploit budget
+												</p>
+												<p class="font-mono-nums text-sm font-semibold text-foreground">
+													{fmt(decision.trace.debug.exploitUsed)} / {fmt(
+														decision.trace.debug.exploitBudget
+													)}
+												</p>
+											</div>
+										</div>
+										{#if decision.trace.exploitAdjustments.length}
+											<div class="mb-3 grid gap-px border border-border">
+												{#each decision.trace.exploitAdjustments as adjustment (`${adjustment.title}-${adjustment.targetAction}`)}
+													<div class="bg-background p-3">
+														<div class="mb-1 flex items-center justify-between gap-2">
+															<p
+																class="text-[10px] tracking-widest text-muted-foreground uppercase"
+															>
+																{adjustment.title}
+															</p>
+															<p class="font-mono-nums text-[10px] text-primary">
+																{fmt(adjustment.delta)}
+															</p>
+														</div>
+														<p class="text-[11px] leading-relaxed text-muted-foreground">
+															{adjustment.detail}
+														</p>
+													</div>
+												{/each}
+											</div>
+										{/if}
+										<div class="grid gap-px border border-border md:grid-cols-2">
+											{#each decision.trace.options as option (`${option.type}-${option.amount}`)}
+												<div class="bg-background p-3">
+													<div class="mb-1 flex items-center justify-between gap-2">
+														<p class="text-[10px] tracking-widest text-muted-foreground uppercase">
+															{option.type}{option.amount ? ` ${fmt(option.amount)}` : ''}
+														</p>
+														<p class="font-mono-nums text-[10px] text-foreground">
+															{pct(option.probability)}
+														</p>
+													</div>
+													<p class="text-[11px] text-muted-foreground">
+														base {fmt(option.baselineUtility)} · adj {fmt(option.adjustedUtility)}
+													</p>
+												</div>
+											{/each}
+										</div>
 									</div>
 								{/each}
 							</div>

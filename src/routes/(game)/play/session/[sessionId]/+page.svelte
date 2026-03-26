@@ -13,8 +13,24 @@
 	let mobileInfoOpen = $state(false);
 	let sizingPanelOpen = $state(false);
 	let sizedActionValue = $state<number[]>([0]);
+	let actionSubmitting = $state(false);
+
+	type EnhanceSubmitInput = { cancel: () => void };
+	type EnhanceSubmitResult = { update: () => Promise<void> };
+	const enhanceLockedSubmit = ({ cancel }: EnhanceSubmitInput) => {
+		if (actionSubmitting) {
+			cancel();
+			return;
+		}
+		actionSubmitting = true;
+		return async ({ update }: EnhanceSubmitResult) => {
+			await update();
+			actionSubmitting = false;
+		};
+	};
 
 	const fmt = (v: number) => (Number.isInteger(v) ? `${v}` : v.toFixed(1));
+	const pct = (v: number) => `${Math.round(v * 100)}%`;
 	const totalChips = $derived(
 		data.currentHand
 			? data.currentHand.state.playerStack + data.currentHand.state.botStack
@@ -42,15 +58,26 @@
 					(data.currentHand.state.playerStack <= 0 || data.currentHand.state.botStack <= 0)
 			: false
 	);
+	const actionTypeLabel = (type: string) => (type === 'bet' ? 'Bet' : 'Raise');
 	const sizingOption = $derived(
 		data.currentHand?.state.actionOptions.find(
 			(option) => option.type === 'bet' || option.type === 'raise'
-		) ??
-			data.currentHand?.state.actionOptions.find((option) => option.type === 'all-in') ??
-			null
+		) ?? null
 	);
 	const sizingMin = $derived(sizingOption?.minAmount ?? sizingOption?.amount ?? 0);
 	const sizingMax = $derived(sizingOption?.maxAmount ?? sizingOption?.amount ?? sizingMin);
+	const selectedSizingAmount = $derived(sizedActionValue[0] ?? sizingMin);
+	const sizingAtMax = $derived(sizingOption !== null && selectedSizingAmount >= sizingMax);
+	const sizingActionLabel = $derived(
+		sizingOption ? (sizingAtMax ? 'All-in' : actionTypeLabel(sizingOption.type)) : ''
+	);
+	const sizingPanelLabel = $derived(
+		sizingOption ? (sizingAtMax ? 'All-in' : `${actionTypeLabel(sizingOption.type)} sizing`) : ''
+	);
+	const liveOpponentModel = $derived(
+		data.currentHand?.state.opponentModel ?? data.opponentModel ?? null
+	);
+	const lastBotDecision = $derived(data.currentHand?.state.lastBotDecision ?? null);
 
 	const SUIT: Record<string, string> = { h: '♥', d: '♦', c: '♣', s: '♠' };
 	const parseCard = (code: string) => {
@@ -65,8 +92,6 @@
 			: type === 'raise' || type === 'bet' || type === 'all-in'
 				? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
 				: 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20';
-
-	const actionTypeLabel = (type: string) => (type === 'bet' ? 'Bet' : 'Raise');
 
 	$effect(() => {
 		if (!data.currentHand || data.currentHand.state.outcome !== null) return;
@@ -153,6 +178,110 @@
 					<p class="text-[11px] leading-relaxed text-muted-foreground">{dr.rationale}</p>
 				</div>
 			{/each}
+		</div>
+	{/if}
+	{#if liveOpponentModel}
+		<div class="border-t border-border p-4">
+			<p class="mb-3 text-[10px] tracking-widest text-muted-foreground uppercase">
+				Opponent posterior
+			</p>
+			<p class="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+				{liveOpponentModel.summary}
+			</p>
+			{#if liveOpponentModel.tags.length}
+				<div class="mb-3 flex flex-wrap gap-1.5">
+					{#each liveOpponentModel.tags as tag (tag)}
+						<Badge variant="outline" class="text-[10px] uppercase">{tag}</Badge>
+					{/each}
+				</div>
+			{/if}
+			<div class="grid gap-px border border-border">
+				{#each [{ label: 'Pressure fold', mean: liveOpponentModel.foldToPressure.mean, confidence: liveOpponentModel.foldToPressure.confidence }, { label: 'Pressure call', mean: liveOpponentModel.callVsPressure.mean, confidence: liveOpponentModel.callVsPressure.confidence }, { label: 'Pressure raise', mean: liveOpponentModel.raiseVsPressure.mean, confidence: liveOpponentModel.raiseVsPressure.confidence }, { label: 'Proactive agg', mean: liveOpponentModel.proactiveAggression.mean, confidence: liveOpponentModel.proactiveAggression.confidence }, { label: 'River bluff', mean: liveOpponentModel.riverBluffing.mean, confidence: liveOpponentModel.riverBluffing.confidence }] as stat (stat.label)}
+					<div class="grid grid-cols-[1fr_auto] gap-2 bg-card p-3">
+						<div>
+							<p class="text-[10px] tracking-widest text-muted-foreground uppercase">
+								{stat.label}
+							</p>
+							<p class="text-[11px] text-muted-foreground">conf {pct(stat.confidence)}</p>
+						</div>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">{pct(stat.mean)}</p>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+	{#if lastBotDecision}
+		<div class="border-t border-border p-4">
+			<div class="mb-3 flex items-center justify-between gap-2">
+				<p class="text-[10px] tracking-widest text-muted-foreground uppercase">Bot trace</p>
+				<Badge variant="outline" class="text-[10px] uppercase">{lastBotDecision.layer}</Badge>
+			</div>
+			<p class="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+				{lastBotDecision.summary}
+			</p>
+			<div class="mb-3 grid gap-px border border-border">
+				<div class="grid grid-cols-2 gap-px">
+					<div class="bg-card p-3">
+						<p class="text-[10px] tracking-widest text-muted-foreground uppercase">Chosen</p>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">
+							{lastBotDecision.chosenAction}
+							{lastBotDecision.chosenAmount ? ` ${fmt(lastBotDecision.chosenAmount)}` : ''}
+						</p>
+					</div>
+					<div class="bg-card p-3">
+						<p class="text-[10px] tracking-widest text-muted-foreground uppercase">Baseline</p>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">
+							{lastBotDecision.baselineAction}
+						</p>
+					</div>
+				</div>
+				<div class="grid grid-cols-2 gap-px">
+					<div class="bg-card p-3">
+						<p class="text-[10px] tracking-widest text-muted-foreground uppercase">Confidence</p>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">
+							{pct(lastBotDecision.confidence)}
+						</p>
+					</div>
+					<div class="bg-card p-3">
+						<p class="text-[10px] tracking-widest text-muted-foreground uppercase">Exploit use</p>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">
+							{fmt(lastBotDecision.debug.exploitUsed)} / {fmt(lastBotDecision.debug.exploitBudget)}
+						</p>
+					</div>
+				</div>
+			</div>
+			{#if lastBotDecision.exploitAdjustments.length}
+				<div class="mb-3 grid gap-px border border-border">
+					{#each lastBotDecision.exploitAdjustments as adjustment (`${adjustment.title}-${adjustment.targetAction}`)}
+						<div class="bg-card p-3">
+							<div class="mb-1 flex items-center justify-between gap-2">
+								<p class="text-[10px] tracking-widest text-muted-foreground uppercase">
+									{adjustment.title}
+								</p>
+								<p class="font-mono-nums text-[10px] text-primary">{fmt(adjustment.delta)}</p>
+							</div>
+							<p class="text-[11px] leading-relaxed text-muted-foreground">{adjustment.detail}</p>
+						</div>
+					{/each}
+				</div>
+			{/if}
+			<div class="grid gap-px border border-border">
+				{#each lastBotDecision.options as option (`${option.type}-${option.amount}`)}
+					<div class="grid grid-cols-[1fr_auto] gap-2 bg-card p-3">
+						<div>
+							<p class="text-[10px] tracking-widest text-muted-foreground uppercase">
+								{option.type}{option.amount ? ` ${fmt(option.amount)}` : ''}
+							</p>
+							<p class="text-[11px] text-muted-foreground">
+								base {fmt(option.baselineUtility)} · adj {fmt(option.adjustedUtility)}
+							</p>
+						</div>
+						<p class="font-mono-nums text-sm font-semibold text-foreground">
+							{pct(option.probability)}
+						</p>
+					</div>
+				{/each}
+			</div>
 		</div>
 	{/if}
 {/snippet}
@@ -329,11 +458,11 @@
 					{#if !outcomeLabel && state.toAct === 'player'}
 						<div class="grid gap-3">
 							<div class="flex flex-wrap gap-2">
-								{#each state.actionOptions.filter((option) => option.type !== 'bet' && option.type !== 'raise' && option.type !== 'all-in') as option (`${option.type}-${option.amount ?? 0}`)}
+								{#each state.actionOptions.filter((option) => option.type !== 'bet' && option.type !== 'raise' && (option.type !== 'all-in' || !sizingOption)) as option (`${option.type}-${option.amount ?? 0}`)}
 									<form
 										method="POST"
 										action="?/act"
-										use:enhance
+										use:enhance={enhanceLockedSubmit}
 										data-sveltekit-noscroll
 										class="min-w-24 flex-1"
 									>
@@ -341,6 +470,7 @@
 										<input type="hidden" name="amount" value={option.amount ?? 0} />
 										<button
 											type="submit"
+											disabled={actionSubmitting}
 											class="w-full border px-3 py-2 text-xs font-semibold tracking-wider uppercase transition active:scale-95 {actionClass(
 												option.type
 											)}"
@@ -352,10 +482,11 @@
 								{#if sizingOption}
 									<button
 										type="button"
+										disabled={actionSubmitting}
 										onclick={() => (sizingPanelOpen = !sizingPanelOpen)}
 										class="min-w-24 flex-1 border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold tracking-wider text-emerald-300 uppercase transition hover:bg-emerald-500/20 active:scale-95"
 									>
-										{actionTypeLabel(sizingOption.type)}
+										{sizingActionLabel}
 									</button>
 								{/if}
 							</div>
@@ -363,7 +494,7 @@
 								<form
 									method="POST"
 									action="?/act"
-									use:enhance
+									use:enhance={enhanceLockedSubmit}
 									data-sveltekit-noscroll
 									class="border border-border bg-card p-3"
 								>
@@ -372,12 +503,8 @@
 									<div
 										class="mb-2 flex items-center justify-between gap-3 text-[10px] tracking-widest uppercase"
 									>
-										<span class="text-muted-foreground"
-											>{actionTypeLabel(sizingOption.type)} sizing</span
-										>
-										<span class="font-mono-nums text-primary"
-											>{fmt(sizedActionValue[0] ?? sizingMin)}</span
-										>
+										<span class="text-muted-foreground">{sizingPanelLabel}</span>
+										<span class="font-mono-nums text-primary">{fmt(selectedSizingAmount)}</span>
 									</div>
 									<Slider
 										bind:value={sizedActionValue}
@@ -395,10 +522,11 @@
 									</div>
 									<button
 										type="submit"
+										disabled={actionSubmitting}
 										class="w-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold tracking-wider text-emerald-300 uppercase transition hover:bg-emerald-500/20 active:scale-95"
 									>
-										Confirm {actionTypeLabel(sizingOption.type)}
-										{fmt(sizedActionValue[0] ?? sizingMin)}
+										{sizingActionLabel}
+										{fmt(selectedSizingAmount)}
 									</button>
 								</form>
 							{/if}

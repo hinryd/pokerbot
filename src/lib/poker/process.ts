@@ -1,12 +1,13 @@
 import type { PlayerSessionProfile } from './analysis';
-import type { ActionType, Difficulty, HandState } from './types';
+import type { ActionType, Difficulty, HandState, OpponentModelSnapshot } from './types';
 import { applyAction, buildActionOptions, normalizeActionAmount } from './engine';
 import { botDecide } from './bot';
 
 export function advanceBotTurns(
 	state: HandState,
 	difficulty: Difficulty,
-	profile?: PlayerSessionProfile
+	profile?: PlayerSessionProfile,
+	opponentSnapshot?: OpponentModelSnapshot | null
 ): HandState {
 	if (state.outcome !== null || state.street === 'showdown' || state.toAct !== 'bot') {
 		return {
@@ -18,7 +19,7 @@ export function advanceBotTurns(
 		};
 	}
 
-	const move = botDecide(state, difficulty, profile);
+	const move = botDecide(state, difficulty, profile, opponentSnapshot);
 	const amount = normalizeActionAmount(state, 'bot', move.type, move.amount);
 	if (amount === null) {
 		return {
@@ -26,7 +27,7 @@ export function advanceBotTurns(
 			actionOptions: buildActionOptions(state, 'player')
 		};
 	}
-	const s = applyAction(state, 'bot', move.type, amount);
+	const s = applyAction(state, 'bot', move.type, amount, move.trace);
 
 	if (s.outcome === null && s.street !== 'showdown' && s.toAct === 'player') {
 		s.actionOptions = buildActionOptions(s, 'player');

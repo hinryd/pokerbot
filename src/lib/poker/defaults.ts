@@ -2,22 +2,28 @@ import type { DifficultyOption, SessionCreationInput } from './types';
 
 export const difficultyOptions: DifficultyOption[] = [
 	{
-		value: 'apprentice',
-		label: 'Apprentice',
-		summary: 'Forgiving lines with slow adaptation.',
-		adaptation: 'Punishes repeated leaks gently.'
+		value: 'fish',
+		label: 'Fish',
+		summary: 'Loose-passive with capped pressure.',
+		adaptation: 'Overcalls, underfolds, and misses many thin value spots.'
 	},
 	{
-		value: 'contender',
-		label: 'Contender',
-		summary: 'Practical pressure with steady exploit adjustment.',
-		adaptation: 'Tracks your habits and leans into them mid-session.'
+		value: 'rec',
+		label: 'Rec',
+		summary: 'Inconsistent but reactive rec strategy.',
+		adaptation: 'Mixes curiosity calls with occasional fear folds and uneven aggression.'
 	},
 	{
-		value: 'shark',
-		label: 'Shark',
-		summary: 'Sharper ranges, cleaner sizings, faster punishment.',
-		adaptation: 'Finds repeated mistakes quickly and attacks them.'
+		value: 'amateur',
+		label: 'Amateur',
+		summary: 'Solid fundamentals, moderate exploit adaptation.',
+		adaptation: 'Uses coherent ranges and pressure, but still leaves leaks in tough nodes.'
+	},
+	{
+		value: 'pro',
+		label: 'Pro',
+		summary: 'Disciplined high-pressure strategy.',
+		adaptation: 'Tracks your posteriors quickly and applies constrained exploits with precision.'
 	}
 ];
 
@@ -27,7 +33,20 @@ export const sessionPresets = {
 } as const;
 
 export const defaultSessionInput: SessionCreationInput = {
-	difficulty: 'contender',
+	difficulty: 'amateur',
 	startingStack: 100,
 	bigBlind: 2
+};
+
+const validDifficulties = new Set(difficultyOptions.map((option) => option.value));
+
+export const normalizeDifficulty = (value: string | null | undefined): SessionCreationInput['difficulty'] => {
+	if (!value) return defaultSessionInput.difficulty;
+	if (validDifficulties.has(value as SessionCreationInput['difficulty'])) {
+		return value as SessionCreationInput['difficulty'];
+	}
+	if (value === 'apprentice') return 'fish';
+	if (value === 'contender') return 'amateur';
+	if (value === 'shark') return 'pro';
+	return defaultSessionInput.difficulty;
 };

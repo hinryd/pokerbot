@@ -93,7 +93,7 @@
 					<p
 						class="mb-3 text-[10px] font-semibold tracking-[0.3em] text-muted-foreground uppercase"
 					>
-						Bot difficulty
+						Bot profile
 					</p>
 					<div class="grid gap-px border border-border">
 						{#each data.difficultyOptions as option (option.value)}

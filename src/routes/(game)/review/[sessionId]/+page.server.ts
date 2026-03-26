@@ -1,6 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getReviewBySession, getSessionById } from '$lib/server/training/queries';
+import { normalizeDifficulty } from '$lib/poker/defaults';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	if (!locals.user) {
@@ -18,7 +19,10 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		: null;
 
 	return {
-		session,
+		session: {
+			...session,
+			difficulty: normalizeDifficulty(session.difficulty)
+		},
 		reviews,
 		averageGrade
 	};

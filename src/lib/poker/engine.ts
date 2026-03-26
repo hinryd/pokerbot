@@ -1,4 +1,11 @@
-import type { ActionOption, ActionType, HandState, Seat } from './types';
+import type {
+	ActionOption,
+	ActionType,
+	BotDecisionTrace,
+	HandAction,
+	HandState,
+	Seat
+} from './types';
 import { buildShuffledDeck, dealNewHand } from './deck';
 import { determineWinner } from './evaluator';
 
@@ -43,10 +50,82 @@ function getActorStack(state: HandState, actor: Seat) {
 	return actor === 'player' ? state.playerStack : state.botStack;
 }
 
-function getMinRaiseTo(state: HandState, actor: Seat) {
-	const actorBet = getActorBet(state, actor);
-	const lastRaiseSize = Math.max(state.bigBlind, state.currentBet - actorBet);
-	return state.currentBet + lastRaiseSize;
+function getMinRaiseTo(state: HandState, _actor: Seat) {
+	return state.currentBet + state.lastFullRaiseSize;
+}
+
+function getStreetReplayState(state: HandState, street: HandState['street']) {
+	if (street === 'preflop') {
+		const playerBlind = state.dealer === 'player' ? state.smallBlind : state.bigBlind;
+		const botBlind = state.dealer === 'bot' ? state.smallBlind : state.bigBlind;
+		return {
+			currentBet: Math.max(playerBlind, botBlind),
+			lastFullRaiseSize: state.bigBlind,
+			playerBetThisStreet: playerBlind,
+			botBetThisStreet: botBlind
+		};
+	}
+
+	return {
+		currentBet: 0,
+		lastFullRaiseSize: state.bigBlind,
+		playerBetThisStreet: 0,
+		botBetThisStreet: 0
+	};
+}
+
+export function deriveLastFullRaiseSize(state: HandState) {
+	if (!state.handActions.length) return state.bigBlind;
+
+	let currentStreet: HandState['street'] = 'preflop';
+	let replay = getStreetReplayState(state, currentStreet);
+
+	for (const action of state.handActions) {
+		if (action.street !== currentStreet) {
+			currentStreet = action.street;
+			replay = getStreetReplayState(state, currentStreet);
+		}
+
+		const actorBetBefore =
+			action.actor === 'player' ? replay.playerBetThisStreet : replay.botBetThisStreet;
+		const actorBetAfter = actorBetBefore + action.amount;
+
+		if (action.actor === 'player') {
+			replay.playerBetThisStreet = actorBetAfter;
+		} else {
+			replay.botBetThisStreet = actorBetAfter;
+		}
+
+		if (action.type === 'bet') {
+			replay.currentBet = actorBetAfter;
+			replay.lastFullRaiseSize = Math.max(state.bigBlind, actorBetAfter);
+			continue;
+		}
+
+		if (action.type === 'raise') {
+			replay.lastFullRaiseSize = actorBetAfter - replay.currentBet;
+			replay.currentBet = actorBetAfter;
+			continue;
+		}
+
+		if (action.type !== 'all-in') continue;
+
+		if (replay.currentBet <= 0) {
+			replay.currentBet = actorBetAfter;
+			replay.lastFullRaiseSize = Math.max(state.bigBlind, actorBetAfter);
+			continue;
+		}
+
+		if (actorBetAfter <= replay.currentBet) continue;
+
+		const raiseSize = actorBetAfter - replay.currentBet;
+		replay.currentBet = actorBetAfter;
+		if (raiseSize >= replay.lastFullRaiseSize) {
+			replay.lastFullRaiseSize = raiseSize;
+		}
+	}
+
+	return replay.lastFullRaiseSize;
 }
 
 export function getActionOption(state: HandState, actor: Seat, type: ActionType) {
@@ -75,23 +154,43 @@ export function buildActionOptions(state: HandState, actor: Seat): ActionOption[
 	const actorBet = getActorBet(state, actor);
 	const actorStack = getActorStack(state, actor);
 	const toCall = state.currentBet - actorBet;
+	const lastStreetAction = [...state.handActions]
+		.reverse()
+		.find((action) => action.street === state.street);
+	const raisingLockedByAllIn =
+		lastStreetAction?.type === 'all-in' &&
+		actorBet > 0 &&
+		state.currentBet > actorBet &&
+		state.currentBet - actorBet < state.lastFullRaiseSize;
+	const addAllInOption = (options: ActionOption[]) => {
+		if (!options.some((option) => option.type === 'all-in')) {
+			options.push({ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack });
+		}
+	};
 
 	if (toCall <= 0) {
 		const minBet = state.bigBlind;
-		if (actorStack < minBet) return [{ type: 'check', label: 'Check' }];
-		const opts: ActionOption[] = [
-			{ type: 'check', label: 'Check' },
-			{
-				type: 'bet',
-				label: actorStack > minBet ? `Bet ${minBet}-${actorStack}` : `Bet ${minBet}`,
-				amount: minBet,
-				minAmount: minBet,
-				maxAmount: actorStack
-			}
-		];
-		if (actorStack > minBet) {
-			opts.push({ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack });
+		if (actorStack < minBet) {
+			return actorStack > 0
+				? [
+						{ type: 'check', label: 'Check' },
+						{ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack }
+					]
+				: [{ type: 'check', label: 'Check' }];
 		}
+		const opts: ActionOption[] = [{ type: 'check', label: 'Check' }];
+		if (actorStack === minBet) {
+			addAllInOption(opts);
+			return opts;
+		}
+		opts.push({
+			type: 'bet',
+			label: `Bet ${minBet}-${actorStack}`,
+			amount: minBet,
+			minAmount: minBet,
+			maxAmount: actorStack
+		});
+		addAllInOption(opts);
 		return opts;
 	}
 
@@ -105,7 +204,6 @@ export function buildActionOptions(state: HandState, actor: Seat): ActionOption[
 
 	const minRaiseTo = getMinRaiseTo(state, actor);
 	const raiseAdd = minRaiseTo - actorBet;
-	const canRaise = actorStack > callCost + state.bigBlind;
 	const maxRaiseAdd = actorStack;
 
 	const opts: ActionOption[] = [
@@ -113,18 +211,22 @@ export function buildActionOptions(state: HandState, actor: Seat): ActionOption[
 		{ type: 'call', label: `Call ${callCost}`, amount: callCost }
 	];
 
-	if (canRaise && raiseAdd <= actorStack) {
-		opts.push({
-			type: 'raise',
-			label: `Raise to ${minRaiseTo}-${actorBet + maxRaiseAdd}`,
-			amount: raiseAdd,
-			minAmount: raiseAdd,
-			maxAmount: maxRaiseAdd
-		});
+	if (!raisingLockedByAllIn && raiseAdd <= actorStack) {
+		if (raiseAdd === actorStack) {
+			addAllInOption(opts);
+		} else {
+			opts.push({
+				type: 'raise',
+				label: `Raise to ${minRaiseTo}-${actorBet + maxRaiseAdd}`,
+				amount: raiseAdd,
+				minAmount: raiseAdd,
+				maxAmount: maxRaiseAdd
+			});
+		}
 	}
 
 	if (actorStack > callCost) {
-		opts.push({ type: 'all-in', label: `All-in ${actorStack}`, amount: actorStack });
+		addAllInOption(opts);
 	}
 
 	return opts;
@@ -147,6 +249,7 @@ function advanceStreet(s: HandState): HandState {
 		...s,
 		actionsThisStreet: 0,
 		currentBet: 0,
+		lastFullRaiseSize: s.bigBlind,
 		playerBetThisStreet: 0,
 		botBetThisStreet: 0,
 		actionOptions: []
@@ -185,38 +288,85 @@ function runoutToShowdown(state: HandState): HandState {
 	return s;
 }
 
-export function applyAction(state: HandState, actor: Seat, type: ActionType, amount: number): HandState {
+export function applyResolvedAction(state: HandState, action: HandAction): HandState {
+	const nextTrace = action.actor === 'bot' ? (action.decisionTrace ?? null) : state.lastBotDecision;
+	const nextHistory =
+		action.actor === 'bot' && action.decisionTrace
+			? [...state.botDecisionHistory, action.decisionTrace]
+			: state.botDecisionHistory;
 	const s: HandState = {
 		...state,
-		handActions: [...state.handActions, { street: state.street, actor, type, amount }],
+		handActions: [...state.handActions, action],
+		lastBotDecision: nextTrace,
+		botDecisionHistory: nextHistory,
+		opponentModel: state.opponentModel,
 		actionsThisStreet: state.actionsThisStreet + 1
 	};
+	const actorBetBefore = getActorBet(state, action.actor);
+	const actorBetAfter = actorBetBefore + action.amount;
+	const previousCurrentBet = state.currentBet;
+	const previousLastFullRaiseSize = state.lastFullRaiseSize;
 
-	if (actor === 'player') {
-		s.playerStack = state.playerStack - amount;
-		s.playerBetThisStreet = state.playerBetThisStreet + amount;
+	if (action.actor === 'player') {
+		s.playerStack = state.playerStack - action.amount;
+		s.playerBetThisStreet = state.playerBetThisStreet + action.amount;
 	} else {
-		s.botStack = state.botStack - amount;
-		s.botBetThisStreet = state.botBetThisStreet + amount;
+		s.botStack = state.botStack - action.amount;
+		s.botBetThisStreet = state.botBetThisStreet + action.amount;
 	}
-	s.pot = state.pot + amount;
+	s.pot = state.pot + action.amount;
 
-	if (type === 'bet' || type === 'raise' || type === 'all-in') {
-		s.currentBet = actor === 'player' ? s.playerBetThisStreet : s.botBetThisStreet;
+	if (action.type === 'bet') {
+		s.currentBet = actorBetAfter;
+		s.lastFullRaiseSize = Math.max(state.bigBlind, actorBetAfter);
+	} else if (action.type === 'raise') {
+		s.currentBet = actorBetAfter;
+		s.lastFullRaiseSize = actorBetAfter - previousCurrentBet;
+	} else if (action.type === 'all-in') {
+		if (previousCurrentBet <= 0) {
+			s.currentBet = actorBetAfter;
+			s.lastFullRaiseSize = Math.max(state.bigBlind, actorBetAfter);
+		} else if (actorBetAfter > previousCurrentBet) {
+			const raiseSize = actorBetAfter - previousCurrentBet;
+			s.currentBet = actorBetAfter;
+			if (raiseSize >= previousLastFullRaiseSize) {
+				s.lastFullRaiseSize = raiseSize;
+			}
+		}
 	}
 
-	if (type === 'fold') {
-		s.outcome = actor === 'player' ? 'bot_wins' : 'player_wins';
+	if (action.type === 'fold') {
+		s.outcome = action.actor === 'player' ? 'bot_wins' : 'player_wins';
 		return settleHandOutcome(s);
+	}
+
+	if (action.type === 'all-in' && previousCurrentBet > 0 && actorBetAfter < previousCurrentBet) {
+		return settleHandOutcome(runoutToShowdown(s));
 	}
 
 	if (shouldRunoutToShowdown(s)) return settleHandOutcome(runoutToShowdown(s));
 
 	if (isStreetComplete(s)) return advanceStreet(s);
 
-	s.toAct = actor === 'player' ? 'bot' : 'player';
+	s.toAct = action.actor === 'player' ? 'bot' : 'player';
 	s.actionOptions = buildActionOptions(s, s.toAct);
 	return s;
+}
+
+export function applyAction(
+	state: HandState,
+	actor: Seat,
+	type: ActionType,
+	amount: number,
+	decisionTrace?: BotDecisionTrace
+): HandState {
+	return applyResolvedAction(state, {
+		street: state.street,
+		actor,
+		type,
+		amount,
+		decisionTrace
+	});
 }
 
 export function createNewHand(
@@ -245,15 +395,20 @@ export function createNewHand(
 		smallBlind,
 		bigBlind,
 		currentBet: 0,
+		lastFullRaiseSize: bigBlind,
 		playerBetThisStreet: 0,
 		botBetThisStreet: 0,
 		actionsThisStreet: 0,
 		handActions: [],
+		lastBotDecision: null,
+		botDecisionHistory: [],
+		opponentModel: null,
 		outcome: null,
 		actionOptions: []
 	};
 
-	const playerBlind = dealer === 'player' ? Math.min(playerStack, smallBlind) : Math.min(playerStack, bigBlind);
+	const playerBlind =
+		dealer === 'player' ? Math.min(playerStack, smallBlind) : Math.min(playerStack, bigBlind);
 	const botBlind = dealer === 'bot' ? Math.min(botStack, smallBlind) : Math.min(botStack, bigBlind);
 
 	s.playerStack -= playerBlind;
