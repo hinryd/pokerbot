@@ -3,21 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
     container_name: pokerbot-app
     init: true
     restart: unless-stopped
     ports:
       - '4892:4892'
-    environment:
-      ORIGIN: ${ORIGIN:-http://localhost:4892}
-      HOST: 0.0.0.0
-      PORT: 4892
-      DATABASE_URL: /data/pokerbot.sqlite
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-local-dev-secret-change-me}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/auto}
+    env_file:
+      - .env
     volumes:
       - sqlite_data:/data
 
