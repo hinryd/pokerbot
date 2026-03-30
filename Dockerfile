@@ -1,14 +1,14 @@
-FROM oven/bun:slim AS build
+FROM node:trixie-slim AS build
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
-RUN bun install --frozen-lockfile
+COPY package.json ./
+RUN npm install
 
 COPY . .
-RUN bun run build
+RUN npm run build
 
-FROM oven/bun:slim AS runtime
+FROM node:trixie-slim AS runtime
 
 WORKDIR /app
 
@@ -16,8 +16,8 @@ ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
 
-COPY package.json pnpm-lock.yaml ./
-RUN bun install --frozen-lockfile --production
+COPY package.json ./
+RUN npm install --omit=dev
 
 COPY --from=build /app/build ./build
 
@@ -25,4 +25,4 @@ RUN mkdir -p /data
 
 EXPOSE 3000
 
-CMD ["bun", "build/index.js"]
+CMD ["node", "build/index.js"]
