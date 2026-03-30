@@ -1,0 +1,24 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pokerbot-app
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      ORIGIN: http://localhost:3000
+      DATABASE_URL: /data/pokerbot.sqlite
+      BETTER_AUTH_SECRET: change-me-in-production
+      GITHUB_CLIENT_ID: ''
+      GITHUB_CLIENT_SECRET: ''
+      OPENROUTER_API_KEY: ''
+      OPENROUTER_MODEL: openrouter/auto
+    volumes:
+      - sqlite_data:/data
+
+volumes:
+  sqlite_data:

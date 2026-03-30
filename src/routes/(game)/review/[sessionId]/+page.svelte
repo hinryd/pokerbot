@@ -182,7 +182,7 @@
 							<div class="bg-card p-4">
 								<p class="mb-3 text-[10px] tracking-widest text-emerald-400 uppercase">Strengths</p>
 								<ul class="grid gap-1.5">
-									{#each review.strengths as item (item)}
+									{#each review.strengths as item, itemIndex (`strength-${itemIndex}`)}
 										<li
 											class="text-[11px] leading-relaxed text-muted-foreground before:text-emerald-400 before:content-['+_']"
 										>
@@ -196,7 +196,7 @@
 							>
 								<p class="mb-3 text-[10px] tracking-widest text-destructive uppercase">Mistakes</p>
 								<ul class="grid gap-1.5">
-									{#each review.mistakes as item (item)}
+									{#each review.mistakes as item, itemIndex (`mistake-${itemIndex}`)}
 										<li
 											class="text-[11px] leading-relaxed text-muted-foreground before:text-destructive before:content-['−_']"
 										>
@@ -210,7 +210,7 @@
 									Recommended line
 								</p>
 								<ul class="grid gap-1.5">
-									{#each review.recommendedLine as item (item)}
+									{#each review.recommendedLine as item, itemIndex (`line-${itemIndex}`)}
 										<li
 											class="text-[11px] leading-relaxed text-muted-foreground before:text-primary before:content-['→_']"
 										>
@@ -296,7 +296,9 @@
 														>
 															{ev.title}
 														</p>
-														<p class="text-[11px] leading-relaxed text-muted-foreground">
+														<p
+															class="text-[11px] leading-relaxed whitespace-pre-line text-muted-foreground"
+														>
 															{ev.detail}
 														</p>
 													</div>

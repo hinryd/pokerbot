@@ -7,9 +7,301 @@ import {
 	buildHandTimeline,
 	type PlayerSessionProfile
 } from '$lib/poker/analysis';
-import type { HandAction, HandState } from '$lib/poker/types';
+import { buildActionOptions } from '$lib/poker/engine';
+import type { ActionOption, ActionType, HandAction, HandState } from '$lib/poker/types';
 
-const potOdds = (toCall: number, pot: number) => toCall / (pot + toCall);
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const aggressiveActions = new Set<ActionType>(['bet', 'raise', 'all-in']);
+
+type OptionVariant = 'base' | 'small' | 'medium' | 'big';
+type OpponentRead = 'underbluffing' | 'overbluffing' | 'balanced';
+
+interface OptionCandidate {
+	type: ActionType;
+	amount: number;
+	label: string;
+	variant: OptionVariant;
+}
+
+interface EvaluatedOption extends OptionCandidate {
+	utility: number;
+	foldEquityNeed: number | null;
+	foldEquityEstimate: number | null;
+	intent: 'value' | 'bluff' | 'deny-equity' | 'realize' | 'pot-control';
+	note: string;
+}
+
+function inferOpponentRead(spot: ReturnType<typeof analyzeSpot>): OpponentRead {
+	const delta = spot.opponentValueShare - spot.opponentBluffShare;
+	if (delta > 0.2) return 'underbluffing';
+	if (delta < 0.02) return 'overbluffing';
+	return 'balanced';
+}
+
+function showdownValueScore(spot: ReturnType<typeof analyzeSpot>) {
+	return clamp(
+		spot.strength * 0.86 +
+			spot.equity * 0.62 +
+			(spot.topPair || spot.overpair ? 0.16 : 0) -
+			spot.drawStrength * 0.2,
+		0,
+		1
+	);
+}
+
+function expandOptionCandidates(options: ActionOption[]): OptionCandidate[] {
+	const candidates: OptionCandidate[] = [];
+	const seen = new Set<string>();
+	const pushCandidate = (candidate: OptionCandidate) => {
+		const key = `${candidate.type}:${candidate.amount}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		candidates.push(candidate);
+	};
+
+	for (const option of options) {
+		if (option.type !== 'bet' && option.type !== 'raise') {
+			pushCandidate({
+				type: option.type,
+				amount: option.amount ?? 0,
+				label: option.label,
+				variant: 'base'
+			});
+			continue;
+		}
+
+		const minAmount = option.minAmount ?? option.amount ?? 0;
+		const maxAmount = option.maxAmount ?? option.amount ?? minAmount;
+		if (maxAmount <= minAmount) {
+			pushCandidate({
+				type: option.type,
+				amount: minAmount,
+				label: `${option.type} ${minAmount}`,
+				variant: 'base'
+			});
+			continue;
+		}
+
+		const mediumAmount = Math.round((minAmount + maxAmount) / 2);
+		const sizePoints: Array<{ amount: number; variant: OptionVariant; label: string }> = [
+			{ amount: minAmount, variant: 'small', label: `${option.type} small ${minAmount}` }
+		];
+		if (mediumAmount !== minAmount && mediumAmount !== maxAmount) {
+			sizePoints.push({
+				amount: mediumAmount,
+				variant: 'medium',
+				label: `${option.type} medium ${mediumAmount}`
+			});
+		}
+		sizePoints.push({
+			amount: maxAmount,
+			variant: 'big',
+			label: `${option.type} big ${maxAmount}`
+		});
+
+		for (const sizePoint of sizePoints) {
+			pushCandidate({
+				type: option.type,
+				amount: sizePoint.amount,
+				label: sizePoint.label,
+				variant: sizePoint.variant
+			});
+		}
+	}
+
+	return candidates;
+}
+
+function evaluateCandidate(
+	candidate: OptionCandidate,
+	before: HandState,
+	spot: ReturnType<typeof analyzeSpot>,
+	opponentRead: OpponentRead
+): EvaluatedOption {
+	const effectiveStackBb =
+		Math.min(
+			before.playerStack + before.playerBetThisStreet,
+			before.botStack + before.botBetThisStreet
+		) / before.bigBlind;
+	const continueStrength =
+		spot.equity * 0.54 +
+		spot.strength * 0.18 +
+		spot.drawStrength * 0.14 +
+		Math.max(0, spot.rangeAdvantage) * 0.08 +
+		Math.max(0, spot.nutAdvantage) * 0.06;
+	const valuePressure =
+		spot.equity * 1.6 +
+		spot.strength * 0.68 +
+		Math.max(0, spot.nutAdvantage) * 1.28 +
+		(spot.overpair || spot.topPair ? 0.2 : 0);
+	const bluffWindow =
+		spot.bluffable &&
+		(spot.boardTexture !== 'wet' || spot.inPosition || spot.blockers.blockerScore > 0.08);
+	const bluffPressure =
+		(bluffWindow ? 0.82 : -0.36) +
+		Math.max(0, spot.blockers.blockerScore) * 1.4 +
+		Math.max(0, spot.rangeAdvantage) * 1.16 +
+		spot.opponentBluffShare * 0.24 -
+		spot.opponentValueShare * 0.5;
+	const showdownValue = showdownValueScore(spot);
+	const failedDrawBluffWindow =
+		before.street === 'river' &&
+		spot.boardTexture !== 'dry' &&
+		spot.madeCategory === 'high-card' &&
+		spot.blockers.blockerScore > 0.05;
+
+	if (candidate.type === 'fold') {
+		const utility =
+			(spot.potOdds - continueStrength) * 2.8 +
+			(opponentRead === 'underbluffing' ? 0.12 : opponentRead === 'overbluffing' ? -0.14 : 0);
+		return {
+			...candidate,
+			utility,
+			foldEquityNeed: null,
+			foldEquityEstimate: null,
+			intent: 'pot-control',
+			note:
+				utility > 0
+					? 'Folding avoids negative-EV continuation versus a value-heavy region.'
+					: 'Fold gives up too much when your hand still realizes enough equity.'
+		};
+	}
+
+	if (candidate.type === 'check') {
+		const utility =
+			showdownValue * 1.2 -
+			Math.max(0, valuePressure - 1.1) * 0.4 -
+			(failedDrawBluffWindow ? 0.09 : 0);
+		return {
+			...candidate,
+			utility,
+			foldEquityNeed: null,
+			foldEquityEstimate: null,
+			intent: 'pot-control',
+			note:
+				utility > 0
+					? 'Check preserves showdown value and controls pot growth.'
+					: 'Check misses pressure where betting gains value/protection.'
+		};
+	}
+
+	if (candidate.type === 'call') {
+		const utility =
+			continueStrength * 1.56 -
+			spot.potOdds * 1.34 +
+			showdownValue * 0.42 +
+			(opponentRead === 'overbluffing' ? 0.08 : opponentRead === 'underbluffing' ? -0.08 : 0);
+		return {
+			...candidate,
+			utility,
+			foldEquityNeed: null,
+			foldEquityEstimate: null,
+			intent: 'realize',
+			note:
+				utility > 0
+					? `Call realizes equity at a required threshold near ${Math.round(spot.potOdds * 100)}%.`
+					: 'Call under-realizes equity versus the current price and range pressure.'
+		};
+	}
+
+	const risk = Math.max(1, candidate.amount);
+	const foldEquityNeed = risk / (before.pot + risk);
+	const leverage = risk / (before.pot + risk);
+	const foldEquityEstimate = clamp(
+		0.28 +
+			Math.max(0, spot.rangeAdvantage) * 0.35 +
+			Math.max(0, spot.blockers.blockerScore) * 0.22 +
+			(spot.boardTexture === 'dry' ? 0.06 : spot.boardTexture === 'wet' ? -0.04 : 0) +
+			(opponentRead === 'underbluffing' ? 0.06 : opponentRead === 'overbluffing' ? -0.05 : 0) +
+			leverage * 0.24,
+		0.05,
+		0.92
+	);
+	const valueIntent =
+		showdownValue >= 0.58 || spot.topPair || spot.overpair || spot.nutAdvantage > 0.08;
+	const bluffIntent = !valueIntent && (bluffWindow || failedDrawBluffWindow);
+	let utility = valueIntent
+		? valuePressure + showdownValue * 0.22
+		: bluffPressure + (foldEquityEstimate - foldEquityNeed) * 1.5;
+	let note = valueIntent
+		? 'Aggression extracts value and denies realization.'
+		: 'Aggression functions as a bluff candidate with fold-equity requirements.';
+	let intent: EvaluatedOption['intent'] = valueIntent
+		? 'value'
+		: bluffIntent
+			? 'bluff'
+			: 'deny-equity';
+
+	if (candidate.variant === 'small') {
+		utility += valueIntent ? 0.08 : foldEquityEstimate > foldEquityNeed + 0.08 ? 0.06 : -0.04;
+		note = valueIntent
+			? 'Small sizing can already achieve thin value and keep dominated calls in.'
+			: foldEquityEstimate > foldEquityNeed + 0.08
+				? 'Small sizing already produces enough fold pressure; bigger is not mandatory.'
+				: 'Small sizing likely fails to generate enough folds for a profitable bluff.';
+	}
+
+	if (candidate.variant === 'medium') {
+		utility += 0.04;
+		note = valueIntent
+			? 'Medium sizing balances value extraction and deny-equity pressure.'
+			: 'Medium sizing improves fold pressure while preserving better risk/reward than max size.';
+	}
+
+	if (candidate.variant === 'big') {
+		const bigWorks = foldEquityEstimate >= foldEquityNeed || showdownValue >= 0.68;
+		utility += bigWorks ? 0.08 : -0.08;
+		note = bigWorks
+			? 'Big sizing is justified by fold pressure or strong value leverage.'
+			: 'Big sizing risks over-investing without enough fold equity or value edge.';
+	}
+
+	if (candidate.type === 'all-in') {
+		if (before.street === 'preflop') {
+			const premiumPreflop =
+				spot.rangeEquity >= 0.63 || (spot.rangeEquity >= 0.58 && spot.blockers.blockerScore > 0.1);
+			const shortStackJam =
+				effectiveStackBb <= 14 && (spot.rangeEquity >= 0.52 || spot.blockers.blockerScore > 0.08);
+			if (shortStackJam || (premiumPreflop && effectiveStackBb <= 22)) {
+				utility += 0.12;
+				note =
+					effectiveStackBb <= 14
+						? 'Preflop all-in is viable at this stack depth with enough equity/blocker support.'
+						: 'Preflop all-in is acceptable here because stack depth is lower and hand quality is premium.';
+			} else {
+				const deepPenalty = clamp((effectiveStackBb - 14) * 0.11, 0.35, 7.5);
+				const weakHandPenalty = spot.rangeEquity < 0.55 ? 0.55 : 0;
+				utility -= deepPenalty + weakHandPenalty;
+				note =
+					'Preflop all-in is over-leveraged at this depth for this hand class; normal raise/call lines should dominate.';
+			}
+		} else {
+			const jamGood =
+				showdownValue >= 0.66 || (spot.spr < 1.8 && foldEquityEstimate >= foldEquityNeed);
+			utility += jamGood ? 0.16 : -0.2;
+			note = jamGood
+				? 'All-in leverages stack depth correctly with enough value or fold pressure.'
+				: 'All-in over-leverages this node; better EV likely exists with smaller sizing.';
+		}
+	}
+
+	if (before.street === 'preflop' && candidate.type === 'raise') {
+		utility += candidate.variant === 'small' || candidate.variant === 'medium' ? 0.12 : 0.04;
+		note =
+			candidate.variant === 'small' || candidate.variant === 'medium'
+				? 'Preflop raise sizing is preferred over open-jamming in deeper-stack nodes.'
+				: 'Larger preflop raise can work, but still usually outperforms unnecessary all-in leverage.';
+	}
+
+	return {
+		...candidate,
+		utility,
+		foldEquityNeed,
+		foldEquityEstimate,
+		intent,
+		note
+	};
+}
 
 function scoreDecision(
 	action: HandAction,
@@ -19,162 +311,123 @@ function scoreDecision(
 	score: number;
 	severity: 'info' | 'warning' | 'critical';
 	rationale: string;
-	recommended: string;
+	recommended: ActionType;
+	recommendedLabel: string;
 	evidence: { title: string; detail: string }[];
 } {
 	const spot = analyzeSpot(before, 'player');
-	const aggressive = action.type === 'bet' || action.type === 'raise' || action.type === 'all-in';
-	const continueStrength =
-		spot.equity * 0.56 +
-		spot.strength * 0.18 +
-		spot.drawStrength * 0.12 +
-		Math.max(0, spot.rangeAdvantage) * 0.14;
-	const valueHand =
-		spot.equity >= 0.64 || spot.overpair || spot.topPair || spot.nutAdvantage > 0.08;
-	const pressureHand =
-		spot.equity >= 0.56 || spot.drawStrength >= 0.18 || spot.rangeAdvantage > 0.04;
-	const bluffWindow =
-		spot.bluffable &&
-		(spot.boardTexture !== 'wet' || spot.inPosition || spot.blockers.blockerScore > 0.08);
-	let score = 72;
-	let severity: 'info' | 'warning' | 'critical' = 'info';
-	let rationale = 'The action fits the incentives of the spot.';
-	let recommended: string = action.type;
+	const opponentRead = inferOpponentRead(spot);
+	const options = buildActionOptions(before, 'player');
+	const candidates = expandOptionCandidates(options);
+	const evaluated = candidates.map((candidate) =>
+		evaluateCandidate(candidate, before, spot, opponentRead)
+	);
+	const ranked = [...evaluated].sort((a, b) => b.utility - a.utility);
+	const best = ranked[0]!;
+	const chosen =
+		evaluated
+			.filter((candidate) => candidate.type === action.type)
+			.sort((a, b) => Math.abs(a.amount - action.amount) - Math.abs(b.amount - action.amount))[0] ??
+		best;
 
-	if (before.street === 'preflop') {
-		if (spot.inPosition) {
-			if ((spot.rangeEquity >= 0.53 || spot.blockers.blockerScore > 0.1) && !aggressive) {
-				score -= 18;
-				severity = 'warning';
-				rationale = 'Heads-up button play should attack when your hand performs well versus the defending range or carries strong blocker removal.';
-				recommended = 'raise';
-			} else if (spot.rangeEquity < 0.45 && spot.blockers.blockerScore < 0.02 && aggressive) {
-				score -= 12;
-				severity = 'warning';
-				rationale = 'This open leans too loose: the hand underperforms against the defending range and lacks enough blocker leverage.';
-				recommended = 'fold';
-			}
-		} else if (spot.toCall > 0) {
-			if (action.type === 'fold' && (spot.equity > spot.potOdds + 0.06 || spot.rangeEquity > 0.5)) {
-				score -= 20;
-				severity = 'critical';
-				rationale = 'This hand retains enough direct equity against the opening range to continue. Folding here overconcedes the blind battle.';
-				recommended = 'call';
-			} else if (aggressive && spot.rangeEquity < 0.47 && spot.blockers.blockerScore < 0.08) {
-				score -= 10;
-				severity = 'warning';
-				rationale = 'This 3-bet candidate lacks either enough performance versus the opening range or enough blocker pressure to justify aggression.';
-				recommended = 'call';
-			}
-		}
-	} else if (spot.toCall > 0) {
-		if (action.type === 'fold') {
-			if (continueStrength >= spot.potOdds + 0.08) {
-				score -= 24;
-				severity = 'critical';
-				rationale = `You folded despite having enough equity and pot odds to continue. The spot required defending more often.`;
-				recommended = pressureHand ? 'call' : 'raise';
-			} else {
-				score += 10;
-				rationale = 'The fold respects the price you were being laid and avoids continuing against a range that still contains too much value.';
-				recommended = 'fold';
-			}
-		} else if (action.type === 'call') {
-			if (valueHand) {
-				score -= 11;
-				severity = 'warning';
-				rationale = 'Calling is too passive with a hand that holds enough equity and nut share to push value or deny realization.';
-				recommended = 'raise';
-			} else if (continueStrength < spot.potOdds - 0.04) {
-				score -= 18;
-				severity = 'warning';
-				rationale = 'The call is too loose relative to your direct price, your range position, and the opponent value share.';
-				recommended = 'fold';
-			} else {
-				score += 4;
-				rationale = 'The call keeps bluffs in while meeting the price of continuing and preserving the weaker parts of villain range.';
-				recommended = 'call';
-			}
-		} else if (aggressive) {
-			if (valueHand || (bluffWindow && (profile.overfolds || spot.blockers.blockerScore > 0.08))) {
-				score += 10;
-				rationale = valueHand
-					? 'Applying pressure with a strong range advantage hand builds the pot and denies equity.'
-					: 'The raise leverages blocker removal and fold equity well against a range that still contains bluffs.';
-				recommended = action.type;
-			} else {
-				score -= 10;
-				severity = 'warning';
-				rationale = 'This aggressive response lacks enough range edge, blocker support, or opponent overfold incentive.';
-				recommended = continueStrength >= spot.potOdds ? 'call' : 'fold';
-			}
-		}
-	} else {
-		if (action.type === 'check') {
-			if (valueHand) {
-				score -= 14;
-				severity = 'warning';
-				rationale = 'Checking misses a clear value/protection spot when your hand carries enough equity and nut share against a wide heads-up range.';
-				recommended = 'bet';
-			} else if (before.street === 'river' && profile.underbluffsRiver && bluffWindow) {
-				score -= 16;
-				severity = 'warning';
-				rationale = 'You are passing too many river bluff opportunities. This check continues an underbluffing pattern despite acceptable blocker properties.';
-				recommended = 'bet';
-			}
-		} else if (aggressive) {
-			if (valueHand || bluffWindow) {
-				score += 9;
-				rationale = valueHand
-					? 'Betting is preferred here because strong hands should punish wide ranges and charge draws.'
-					: 'The bet is a credible pressure line backed by blocker coverage and prevents the opponent from realizing equity for free.';
-				recommended = action.type;
-			} else {
-				score -= 10;
-				severity = 'warning';
-				rationale = 'This stab fires too often without enough showdown weakness, blocker support, or board leverage.';
-				recommended = 'check';
-			}
-		}
-	}
+	const utilityGap = best.utility - chosen.utility;
+	const indifferenceBand = 0.08;
+	const effectiveGap = Math.max(0, utilityGap - indifferenceBand);
+	const score = Math.round(clamp(95 - effectiveGap * 96, 35, 97));
+	const severity: 'info' | 'warning' | 'critical' =
+		effectiveGap > 0.4 ? 'critical' : effectiveGap > 0.16 ? 'warning' : 'info';
 
-	if (before.street === 'river' && aggressive && !valueHand && !bluffWindow) {
-		score -= 10;
-		severity = severity === 'critical' ? 'critical' : 'warning';
-		rationale = 'River aggression should be more selective. This line risks overbluffing a poor candidate.';
-		recommended = 'check';
-	}
+	const showdownValue = showdownValueScore(spot);
+	const showdownLabel =
+		showdownValue >= 0.68
+			? 'strong showdown value'
+			: showdownValue >= 0.5
+				? 'medium showdown value'
+				: 'low showdown value';
+	const boardDynamics =
+		spot.boardTexture === 'wet'
+			? 'highly dynamic board with many turn/river shifts'
+			: spot.boardTexture === 'semi-wet'
+				? 'semi-dynamic board where protection still matters'
+				: 'dry board with fewer strong draw transitions';
 
-	if (before.street === 'river' && action.type === 'check' && bluffWindow && profile.underbluffsRiver) {
-		score -= 8;
-		severity = severity === 'critical' ? 'critical' : 'warning';
-		rationale = 'You are likely underbluffing river spots that should contain some pressure hands.';
-		recommended = 'bet';
-	}
+	const aggressiveCandidates = ranked.filter((candidate) => aggressiveActions.has(candidate.type));
+	const bestAggressive = aggressiveCandidates[0] ?? null;
+	const smallestAggressive =
+		aggressiveCandidates.length > 1
+			? [...aggressiveCandidates].sort((a, b) => a.amount - b.amount)[0]!
+			: (aggressiveCandidates[0] ?? null);
+
+	const optionMatrix = ranked
+		.map((candidate) => {
+			const utilityPct = Math.round(clamp((candidate.utility + 0.2) / 2.4, 0, 1) * 100);
+			const feDetail =
+				candidate.foldEquityEstimate !== null && candidate.foldEquityNeed !== null
+					? ` | FE est ${Math.round(candidate.foldEquityEstimate * 100)}% vs need ${Math.round(candidate.foldEquityNeed * 100)}%`
+					: '';
+			return `• ${candidate.label}: ${utilityPct}/100 (${candidate.intent})${feDetail}. ${candidate.note}`;
+		})
+		.join('\n');
+
+	const rationale =
+		severity === 'info'
+			? utilityGap <= indifferenceBand
+				? `Your line is in the same EV band as the top option. ${chosen.label} is strategically acceptable in this node.`
+				: `Your line was close to the top-EV process option. ${chosen.label} tracked the hand dynamics well in this node.`
+			: `The strongest process line was ${best.label}, while you chose ${chosen.label}. The gap came from how this node prices equity realization, fold pressure, and sizing intent.`;
 
 	const evidence = [
-		{ title: 'Pot odds', detail: spot.toCall > 0 ? `${Math.round(spot.potOdds * 100)}% equity required to continue.` : 'No call required.' },
-		{ title: 'Position', detail: spot.inPosition ? 'You are in position and can apply pressure more profitably.' : 'You are out of position, so passivity is punished faster.' },
-		{ title: 'Equity', detail: `Hand equity ${Math.round(spot.equity * 100)}%, range equity ${Math.round(spot.rangeEquity * 100)}%, range edge ${Math.round(spot.rangeAdvantage * 100)}.` },
-		{ title: 'Composition', detail: `Opponent range is weighted to ${Math.round(spot.opponentValueShare * 100)}% value and ${Math.round(spot.opponentBluffShare * 100)}% bluffs.` },
-		{ title: 'Blockers', detail: `Blocker score ${Math.round(spot.blockers.blockerScore * 100)} with ${spot.blockers.valueBlocked.toFixed(1)} value combos and ${spot.blockers.bluffBlocked.toFixed(1)} bluff combos removed.` },
-		{ title: 'Hand strength', detail: `${spot.madeCategory} with spot strength ${Math.round(spot.strength * 100)} and draw strength ${Math.round(spot.drawStrength * 100)}.` },
-		{ title: 'Session pattern', detail: profile.passive ? 'Your session is trending passive, so missed aggression matters more.' : profile.overfolds ? 'Your session is trending toward overfolding under pressure.' : profile.underbluffsRiver ? 'Your session is trending toward river underbluffing.' : 'No major exploit trend was detected from prior hands.' }
+		{
+			title: 'Option matrix (all legal actions)',
+			detail: optionMatrix
+		},
+		{
+			title: 'Opponent bluff/value read',
+			detail: `Range composition projects ${Math.round(spot.opponentValueShare * 100)}% value and ${Math.round(spot.opponentBluffShare * 100)}% bluffs, so this node reads ${opponentRead}.`
+		},
+		{
+			title: 'Showdown value and hand role',
+			detail: `${showdownLabel} with ${spot.madeCategory}; equity ${Math.round(spot.equity * 100)}%, range equity ${Math.round(spot.rangeEquity * 100)}%, draw strength ${Math.round(spot.drawStrength * 100)}%.`
+		},
+		{
+			title: 'Call vs fold equity threshold',
+			detail:
+				spot.toCall > 0
+					? `Continuing requires about ${Math.round(spot.potOdds * 100)}% equity. Compare this to your realization score and the opponent bluff/value read before auto-calling or overfolding.`
+					: 'No call price this street, so the key question is value/protection/bluff objective before choosing check or bet.'
+		},
+		{
+			title: 'Board dynamics and bluff conversion',
+			detail: `This is a ${boardDynamics}. Blocker score ${Math.round(spot.blockers.blockerScore * 100)} and texture should decide whether failed draws can be credibly turned into bluffs.`
+		},
+		{
+			title: 'Sizing objective',
+			detail: bestAggressive
+				? smallestAggressive && bestAggressive.amount !== smallestAggressive.amount
+					? `Best pressure size was ${bestAggressive.label}. Smallest line (${smallestAggressive.label}) ${smallestAggressive.utility >= bestAggressive.utility - 0.08 ? 'already achieves most of the goal, so over-betting is optional' : 'does not fully achieve the fold/value objective, so more leverage is justified'}.`
+					: `Primary sizing recommendation is ${bestAggressive.label}; size should match whether you target thin value, denial, or fold leverage.`
+				: 'Aggressive sizing was not the highest-EV path in this node; realize or control lines scored better.'
+		}
 	];
 
 	return {
-		score: Math.round(Math.max(35, Math.min(96, score))),
+		score,
 		severity,
 		rationale,
-		recommended,
+		recommended: best.type,
+		recommendedLabel: best.label,
 		evidence
 	};
 }
 
-export const saveHandReview = async (sessionId: string, state: HandState, priorStates: HandState[] = []) => {
+export const saveHandReview = async (
+	sessionId: string,
+	state: HandState,
+	priorStates: HandState[] = []
+) => {
 	const timeline = buildHandTimeline(state).filter((entry) => entry.action.actor === 'player');
 	if (!timeline.length) return;
-	const profile = analyzePlayerSessionProfile([...priorStates, state]);
+	const profile = analyzePlayerSessionProfile(priorStates);
 	const decisions = timeline.map((entry) => ({
 		action: entry.action,
 		index: entry.index,
@@ -205,7 +458,7 @@ export const saveHandReview = async (sessionId: string, state: HandState, priorS
 				? 'Bot won this hand.'
 				: 'The hand was split.';
 
-	const summary = `${outcomeLabel} Your line showed ${avgScore >= 78 ? 'strong' : avgScore >= 62 ? 'mixed' : 'weak'} decision quality across ${timeline.length} decision${timeline.length !== 1 ? 's' : ''}. Preflop aggression was ${Math.round(profile.preflopOpenRate * 100)}%, flop aggression ${Math.round(profile.flopAggressionRate * 100)}%, and river bluff pressure ${Math.round(profile.riverBluffRate * 100)}%.`;
+	const summary = `Decision process quality was ${avgScore >= 78 ? 'strong' : avgScore >= 62 ? 'mixed' : 'weak'} across ${timeline.length} decision${timeline.length !== 1 ? 's' : ''}. Preflop aggression ${Math.round(profile.preflopOpenRate * 100)}%, flop aggression ${Math.round(profile.flopAggressionRate * 100)}%, river bluff pressure ${Math.round(profile.riverBluffRate * 100)}%. ${outcomeLabel} This grade is process-first and not result-first.`;
 
 	const reviewId = randomUUID();
 	await db.insert(handReview).values({
@@ -214,10 +467,36 @@ export const saveHandReview = async (sessionId: string, state: HandState, priorS
 		handNumber: state.handNumber,
 		grade: avgScore,
 		summary,
-		strengthsJson: JSON.stringify(strengths.length ? [...strengths, ...sessionFindings.filter((item) => !item.includes('low') && !item.includes('underbluffing') && !item.includes('not opening enough') && !item.includes('very wide'))] : ['You created some useful pressure points in the hand.']),
-		mistakesJson: JSON.stringify(mistakes.length ? [...mistakes, ...sessionFindings.filter((item) => item.includes('low') || item.includes('underbluffing') || item.includes('not opening enough') || item.includes('very wide'))] : ['No major strategic leak stood out in this hand.']),
+		strengthsJson: JSON.stringify(
+			strengths.length
+				? [
+						...strengths,
+						...sessionFindings.filter(
+							(item) =>
+								!item.includes('low') &&
+								!item.includes('underbluffing') &&
+								!item.includes('not opening enough') &&
+								!item.includes('very wide')
+						)
+					]
+				: ['You created some useful pressure points in the hand.']
+		),
+		mistakesJson: JSON.stringify(
+			mistakes.length
+				? [
+						...mistakes,
+						...sessionFindings.filter(
+							(item) =>
+								item.includes('low') ||
+								item.includes('underbluffing') ||
+								item.includes('not opening enough') ||
+								item.includes('very wide')
+						)
+					]
+				: ['No major strategic leak stood out in this hand.']
+		),
 		recommendedLineJson: JSON.stringify(
-			decisions.map((d) => `${d.action.street}: ${d.action.type} → consider ${d.recommended}`)
+			decisions.map((d) => `${d.action.street}: ${d.action.type} → consider ${d.recommendedLabel}`)
 		),
 		thoughtProcess: buildThoughtProcess(state, avgScore, profile),
 		status: 'ready'
@@ -242,15 +521,19 @@ export const saveHandReview = async (sessionId: string, state: HandState, priorS
 	return reviewId;
 };
 
-function buildThoughtProcess(state: HandState, grade: number, profile: PlayerSessionProfile): string {
+function buildThoughtProcess(
+	state: HandState,
+	grade: number,
+	profile: PlayerSessionProfile
+): string {
 	const inPosition = state.dealer === 'player';
 	const posLabel = inPosition ? 'in position' : 'out of position';
 
 	if (grade >= 80) {
-		return `You approached this hand well. Playing ${posLabel}, you combined pot control with timely aggression and avoided the passive patterns that weaken heads-up ranges. Keep tracking whether your river pressure stays high enough to prevent obvious folds.`;
+		return `Strong process this hand. Playing ${posLabel}, you compared multiple legal options, matched sizing to your objective, and kept your line coherent with board and range dynamics. Keep using node-by-node option ranking instead of result-based shortcuts.`;
 	}
 	if (grade >= 65) {
-		return `Playing ${posLabel}, your line had some solid ideas but missed pressure in key places. Start each street by asking whether your hand wants value, protection, or a bluff candidate. Your current session aggression profile is ${Math.round(profile.aggressionRate * 100)}%, which suggests there is still EV in leaning forward more often.`;
+		return `Process quality was mixed. Playing ${posLabel}, some decisions were reasonable, but better EV existed after comparing all legal options and sizing paths. On each street, explicitly decide whether the hand is value, realization, deny-equity, or bluff and choose size accordingly.`;
 	}
-	return `Playing ${posLabel}, several decisions gave away too much initiative. In heads-up poker, overfolding and underbluffing compound quickly. Use pot odds when defending, and when checked to, identify which hands can bet for value and which can credibly bluff instead of defaulting to passivity.`;
+	return `Process leaked too much EV this hand. Playing ${posLabel}, key nodes were resolved too quickly without full option comparison. In heads-up play, consistently evaluate fold/call/raise/check options, required equity, and sizing intent before acting—this matters more than whether the pot happened to be won.`;
 }
