@@ -22,7 +22,8 @@ RUN sh -c "echo 'ORIGIN: $ORIGIN'"
 RUN sh -c "echo 'BETTER_AUTH_SECRET: $BETTER_AUTH_SECRET'"
 
 RUN pnpm run build
+# RUN pnpm run db:push
 
 EXPOSE 4892
 
-CMD ["pnpm", "db:push", "&&", "node", "build/index.js"]
+CMD ["node", "build/index.js"]

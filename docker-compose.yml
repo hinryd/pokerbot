@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+        - ORIGIN=${ORIGIN}
     container_name: pokerbot-app
     init: true
     restart: unless-stopped
