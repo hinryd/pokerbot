@@ -2,14 +2,23 @@ FROM node:trixie-slim AS build
 
 WORKDIR /app
 
-ENV DATABASE_URL=/data/pokerbot.sqlite
+ARG DATABASE_URL
+ENV DATABASE_URL=${DATABASE_URL}
+
+ARG ORIGIN
+ENV ORIGIN=${ORIGIN}
+
+ARG BETTER_AUTH_SECRET
+ENV BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
 
 COPY . .
 RUN mkdir -p /data
 
-RUN npm install
+RUN npm install -g pnpm@latest-10
 
-RUN npm run build
+RUN pnpm install
+
+RUN pnpm run build
 
 FROM node:trixie-slim AS runtime
 
