@@ -2,6 +2,8 @@ FROM node:trixie-slim AS build
 
 WORKDIR /app
 
+ENV DATABASE_URL=/data/pokerbot.sqlite
+
 COPY . .
 RUN mkdir -p /data
 
