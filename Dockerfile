@@ -28,8 +28,8 @@ RUN sh -c "echo 'BETTER_AUTH_SECRET: $BETTER_AUTH_SECRET'"
 RUN sh -c "echo 'DATABASE_URL: $DATABASE_URL'"
 
 RUN pnpm run build
-RUN pnpm run db:push --force
+# RUN pnpm run db:push --force
 
 EXPOSE 4892
 
-CMD ["node", "build/index.js"]
+CMD ["pnpm", "run", "db:push", "--force", "&&", "node", "build/index.js"]
