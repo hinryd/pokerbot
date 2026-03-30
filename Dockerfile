@@ -1,32 +1,26 @@
-FROM node:trixie-slim AS build
+FROM node:22-bookworm-slim
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
 
 WORKDIR /app
 
-ARG ORIGIN
-ENV ORIGIN=$ORIGIN
+RUN corepack enable
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-ARG BETTER_AUTH_SECRET
-ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
-
-RUN apt-get update && apt-get install -y python3
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
+
 RUN mkdir -p /data
+RUN pnpm build
 
-RUN npm install -g pnpm@latest-10
-
-RUN pnpm install
-
-RUN pnpm run build
-
-FROM node:trixie-slim AS runtime
-
-WORKDIR /app
-
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/build ./build
-COPY --from=build /app/data ./data
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=4892
+ENV DATABASE_URL=/data/pokerbot.sqlite
 
 EXPOSE 4892
 
-CMD ["node", "build/index.js"]
+CMD ["sh", "-c", "pnpm db:push && node build/index.js"]
