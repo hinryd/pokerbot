@@ -32,4 +32,4 @@ RUN pnpm run build
 
 EXPOSE 4892
 
-CMD ["pnpm", "run", "db:push", "--force", "&&", "node", "build/index.js"]
+CMD ["sh", "-c", "pnpm db:push && node build/index.js"]
