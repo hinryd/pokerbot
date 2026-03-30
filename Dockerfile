@@ -8,7 +8,7 @@ ENV ORIGIN=$ORIGIN
 ARG BETTER_AUTH_SECRET
 ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
 
-RUN sudo apt-get install python3
+RUN apt-get update && apt-get install -y python3
 
 COPY . .
 RUN mkdir -p /data
