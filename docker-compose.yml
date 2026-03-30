@@ -6,6 +6,7 @@ services:
       args:
         - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
         - ORIGIN=${ORIGIN}
+        - DATABASE_URL=${DATABASE_URL}
     container_name: pokerbot-app
     init: true
     restart: unless-stopped
