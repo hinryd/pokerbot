@@ -15,7 +15,7 @@ services:
     env_file:
       - .env
     volumes:
-      - sqlite_data:/data
+      - sqlite_data:/app/data
 
 volumes:
   sqlite_data:
