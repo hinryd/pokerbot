@@ -6,6 +6,8 @@ ENV DATABASE_URL=/data/pokerbot.sqlite
 ENV ORIGIN=http://localhost:3000
 ENV BETTER_AUTH_SECRET=docker-build-secret
 
+RUN mkdir -p /data
+
 COPY package.json ./
 RUN npm install --ignore-scripts \
 	&& npm rebuild better-sqlite3
