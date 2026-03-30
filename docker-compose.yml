@@ -6,10 +6,8 @@ services:
     container_name: pokerbot-app
     restart: unless-stopped
     ports:
-      - '3000:3000'
+      - '4892:4892'
     environment:
-      HOST: ${HOST:-0.0.0.0}
-      PORT: ${PORT:-3000}
       ORIGIN: ${ORIGIN}
       DATABASE_URL: ${DATABASE_URL:-/data/pokerbot.sqlite}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
